@@ -20,12 +20,12 @@ import (
 
 // Server bundles HTTP handlers for the scheduler.
 type Server struct {
-	store *store.Store
+	store JobStore
 	mux   *http.ServeMux
 }
 
 // NewServer wires routes and dependencies.
-func NewServer(st *store.Store) *Server {
+func NewServer(st JobStore) *Server {
 	s := &Server{
 		store: st,
 		mux:   http.NewServeMux(),

@@ -283,6 +283,7 @@
       <li><a href="#quickstart">Быстрый старт</a></li>
       <li><a href="#docker">Docker</a></li>
       <li><a href="#structure">Структура проекта</a></li>
+      <li><a href="#testing">Тесты и CI</a></li>
       <li><a href="#limitations">Ограничения и TODO</a></li>
     </ul>
   </nav>
@@ -672,16 +673,84 @@ docker compose down -v       # удалить volumes (данные БД и /dat
 │   ├── postgres/           # postgresql.conf
 │   └── worker/             # entrypoint.sh
 ├── internal/
-│   ├── api/                # HTTP handlers
+│   ├── api/                # HTTP handlers + JobStore interface
 │   ├── ffmpeg/             # Запуск ffmpeg
 │   ├── store/              # PostgreSQL слой
+│   ├── testutil/           # Хелперы integration-тестов (build tag integration)
 │   ├── types/              # Доменные типы
 │   └── worker/             # Клиент API + цикл воркера
+├── .github/workflows/      # GitHub Actions (CI на pull request)
 ├── web/docs/               # HTML документация + embed
 ├── Dockerfile              # scheduler + worker targets
 ├── docker-compose.yml
+├── Makefile                # test, test-integration, ci
 ├── .env.example
 └── go.mod</code></pre>
+    </section>
+
+    <section id="testing">
+      <h2>Тесты и CI</h2>
+      <p>
+        Unit-тесты не требуют PostgreSQL: HTTP handlers используют интерфейс <code>api.JobStore</code>
+        с mock-реализацией. Integration-тесты (build tag <code>integration</code>) подключаются к PostgreSQL
+        через переменную <code>DB_DSN</code>.
+      </p>
+
+      <h3>Локальный запуск</h3>
+      <pre><code># unit-тесты (быстро, без БД)
+make test
+
+# integration (нужен PostgreSQL, например docker compose up -d postgres)
+export DB_DSN=postgres://video:video@localhost:5432/video?sslmode=disable
+make test-integration
+
+# полный набор как в CI
+make ci</code></pre>
+
+      <h3>Пирамида тестов</h3>
+      <table>
+        <thead>
+          <tr><th>Слой</th><th>Пакет</th><th>Что проверяет</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Unit</td>
+            <td><code>internal/ffmpeg</code></td>
+            <td><code>splitArgs</code>, <code>buildArgs</code>, проверка путей in/out</td>
+          </tr>
+          <tr>
+            <td>Unit</td>
+            <td><code>internal/api</code></td>
+            <td>Валидация HTTP, коды ответов (mock <code>JobStore</code>)</td>
+          </tr>
+          <tr>
+            <td>Unit</td>
+            <td><code>internal/worker</code></td>
+            <td>HTTP-клиент scheduler (<code>httptest.Server</code>)</td>
+          </tr>
+          <tr>
+            <td>Integration</td>
+            <td><code>internal/store</code></td>
+            <td>Очередь, SKIP LOCKED, lease, retry/failed, логи</td>
+          </tr>
+          <tr>
+            <td>Integration</td>
+            <td><code>internal/api</code></td>
+            <td>Smoke: create → register → request-job → result → get/logs</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3>GitHub Actions</h3>
+      <p>
+        Workflow <code>.github/workflows/ci.yml</code> запускается на pull request и push в <code>main</code>/<code>master</code>:
+      </p>
+      <ol>
+        <li><strong>lint</strong> — <code>go vet</code>, <code>go mod verify</code></li>
+        <li><strong>unit-tests</strong> — <code>go test -short ./...</code></li>
+        <li><strong>build</strong> — сборка всех пакетов и бинарников <code>scheduler</code>, <code>worker</code></li>
+        <li><strong>integration-tests</strong> — PostgreSQL 16 (service container), <code>go test -p 1 -tags=integration</code> (один пакет за раз — общая БД)</li>
+      </ol>
     </section>
 
     <section id="limitations">
