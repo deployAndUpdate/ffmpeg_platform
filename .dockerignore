@@ -1,0 +1,12 @@
+.git
+.gitignore
+.idea
+.cursor
+*.md
+.env
+.env.*
+!.env.example
+docker-compose.override.yml
+data/
+tmp/
+**/*_test.go

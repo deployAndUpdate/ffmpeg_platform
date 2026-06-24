@@ -281,6 +281,7 @@
       <li><a href="#api">HTTP API</a></li>
       <li><a href="#env">Переменные окружения</a></li>
       <li><a href="#quickstart">Быстрый старт</a></li>
+      <li><a href="#docker">Docker</a></li>
       <li><a href="#structure">Структура проекта</a></li>
       <li><a href="#limitations">Ограничения и TODO</a></li>
     </ul>
@@ -551,6 +552,7 @@
 
     <section id="quickstart">
       <h2>Быстрый старт</h2>
+      <p>Рекомендуемый способ — <a href="#docker">Docker Compose</a>. Ниже — локальный запуск без контейнеров.</p>
       <ol>
         <li>Поднять PostgreSQL и применить миграцию:</li>
       </ol>
@@ -582,6 +584,74 @@ go run ./cmd/worker</code></pre>
   }' | jq</code></pre>
     </section>
 
+    <section id="docker">
+      <h2>Docker</h2>
+      <p>
+        Стек из трёх сервисов: PostgreSQL 16, scheduler (HTTP API) и worker (ffmpeg).
+        Схема БД применяется автоматически при первом старте postgres через
+        <code>/docker-entrypoint-initdb.d/</code>.
+      </p>
+
+      <h3>Структура</h3>
+      <pre><code>Dockerfile                  # multi-stage: targets scheduler, worker
+docker-compose.yml          # оркестрация сервисов
+.env.example                # шаблон переменных (скопировать в .env)
+docker/postgres/
+  postgresql.conf           # настройки PostgreSQL в контейнере
+docker/worker/
+  entrypoint.sh             # права на том /data для non-root worker</code></pre>
+
+      <h3>Переменные (.env)</h3>
+      <table>
+        <thead><tr><th>Переменная</th><th>По умолчанию</th><th>Описание</th></tr></thead>
+        <tbody>
+          <tr><td><code>POSTGRES_USER</code></td><td><code>video</code></td><td>Пользователь БД</td></tr>
+          <tr><td><code>POSTGRES_PASSWORD</code></td><td><code>video</code></td><td>Пароль БД (смените в prod)</td></tr>
+          <tr><td><code>POSTGRES_DB</code></td><td><code>video</code></td><td>Имя базы</td></tr>
+          <tr><td><code>POSTGRES_PORT</code></td><td><code>5432</code></td><td>Порт postgres на хосте</td></tr>
+          <tr><td><code>SCHEDULER_PORT</code></td><td><code>8080</code></td><td>Порт scheduler на хосте</td></tr>
+          <tr><td><code>WORKER_MAX_PARALLEL_JOBS</code></td><td><code>1</code></td><td>Параллельные job на воркер</td></tr>
+          <tr><td><code>WORKER_GPU_AVAILABLE</code></td><td><code>false</code></td><td>GPU у воркера</td></tr>
+        </tbody>
+      </table>
+
+      <h3>Запуск</h3>
+      <pre><code>cp .env.example .env
+docker compose up --build -d
+docker compose ps</code></pre>
+      <p>Документация API: <code>http://localhost:8080/docs/</code> (порт из <code>SCHEDULER_PORT</code>).</p>
+
+      <h3>Масштабирование воркеров</h3>
+      <pre><code>docker compose up -d --scale worker=3</code></pre>
+      <p>Все воркеры делят том <code>jobdata</code>, смонтированный в <code>/data</code> — пути в job указывайте относительно него.</p>
+
+      <h3>Пример job в Docker</h3>
+      <pre><code># положить исходник в общий том
+docker compose cp ./sample.mp4 worker:/data/in.mp4
+
+curl -s -X POST http://localhost:8080/jobs \
+  -H "Content-Type: application/json" \
+  -d '{
+    "input_path": "/data/in.mp4",
+    "output_path": "/data/out.mp4",
+    "ffmpeg_args": "-c:v libx264 -crf 28"
+  }' | jq</code></pre>
+
+      <h3>Образы</h3>
+      <table>
+        <thead><tr><th>Сервис</th><th>Образ</th><th>Особенности</th></tr></thead>
+        <tbody>
+          <tr><td><code>postgres</code></td><td><code>postgres:16-alpine</code></td><td>healthcheck, persistent volume, init SQL</td></tr>
+          <tr><td><code>scheduler</code></td><td>сборка <code>target: scheduler</code></td><td>multi-stage Go, non-root, <code>/health</code></td></tr>
+          <tr><td><code>worker</code></td><td>сборка <code>target: worker</code></td><td>ffmpeg, том <code>/data</code>, drop privileges</td></tr>
+        </tbody>
+      </table>
+
+      <h3>Остановка и очистка</h3>
+      <pre><code>docker compose down          # остановить, сохранить volumes
+docker compose down -v       # удалить volumes (данные БД и /data)</code></pre>
+    </section>
+
     <section id="structure">
       <h2>Структура проекта</h2>
       <pre><code>go_distributed_system/
@@ -589,6 +659,9 @@ go run ./cmd/worker</code></pre>
 │   ├── scheduler/          # HTTP API сервер
 │   └── worker/             # Воркер ffmpeg
 ├── db/migrations/          # SQL миграции
+├── docker/
+│   ├── postgres/           # postgresql.conf
+│   └── worker/             # entrypoint.sh
 ├── internal/
 │   ├── api/                # HTTP handlers
 │   ├── ffmpeg/             # Запуск ffmpeg
@@ -596,6 +669,9 @@ go run ./cmd/worker</code></pre>
 │   ├── types/              # Доменные типы
 │   └── worker/             # Клиент API + цикл воркера
 ├── web/docs/               # HTML документация + embed
+├── Dockerfile              # scheduler + worker targets
+├── docker-compose.yml
+├── .env.example
 └── go.mod</code></pre>
     </section>
 
@@ -604,7 +680,7 @@ go run ./cmd/worker</code></pre>
       <ul>
         <li><span class="badge badge-todo">TODO</span> <code>GET /jobs/{id}/logs</code> — эндпоинт возвращает 501</li>
         <li><span class="badge badge-todo">TODO</span> Фоновый reaper для DEAD воркеров и истёкших lease</li>
-        <li><span class="badge badge-todo">TODO</span> Автоматический мигратор (sql-файл применяется вручную)</li>
+        <li><span class="badge badge-todo">TODO</span> Автоматический мигратор для локального запуска (в Docker init SQL применяется при первом старте postgres)</li>
         <li>At-least-once семантика — возможны дублирующиеся запуски ffmpeg</li>
         <li>Логи хранятся в PostgreSQL — не оптимально для очень больших объёмов</li>
         <li>Фильтрация job по GPU/CPU пока не используется при выдаче</li>

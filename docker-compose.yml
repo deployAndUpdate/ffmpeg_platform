@@ -1,0 +1,75 @@
+name: go-distributed-system
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-video}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-video}
+      POSTGRES_DB: ${POSTGRES_DB:-video}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./db/migrations/001_init.sql:/docker-entrypoint-initdb.d/001_init.sql:ro
+      - ./docker/postgres/postgresql.conf:/etc/postgresql/postgresql.conf:ro
+    command: ["postgres", "-c", "config_file=/etc/postgresql/postgresql.conf"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - backend
+
+  scheduler:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: scheduler
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DB_DSN: postgres://${POSTGRES_USER:-video}:${POSTGRES_PASSWORD:-video}@postgres:5432/${POSTGRES_DB:-video}?sslmode=disable
+      SCHEDULER_ADDR: :8080
+    ports:
+      - "${SCHEDULER_PORT:-8080}:8080"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    networks:
+      - backend
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: worker
+    restart: unless-stopped
+    depends_on:
+      scheduler:
+        condition: service_healthy
+    environment:
+      SCHEDULER_URL: http://scheduler:8080
+      WORKER_MAX_PARALLEL_JOBS: ${WORKER_MAX_PARALLEL_JOBS:-1}
+      WORKER_GPU_AVAILABLE: ${WORKER_GPU_AVAILABLE:-false}
+    volumes:
+      - jobdata:/data
+    networks:
+      - backend
+
+networks:
+  backend:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  jobdata:
