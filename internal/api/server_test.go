@@ -19,6 +19,7 @@ import (
 
 type mockStore struct {
 	createJobFn     func(ctx context.Context, job *types.Job) error
+	queueJobFn      func(ctx context.Context, jobID string) error
 	getJobFn        func(ctx context.Context, id string) (*types.Job, error)
 	getJobLogsFn    func(ctx context.Context, jobID string) ([]types.JobLog, error)
 	registerWorkerFn func(ctx context.Context, w *types.Worker) error
@@ -30,6 +31,13 @@ type mockStore struct {
 func (m *mockStore) CreateJob(ctx context.Context, job *types.Job) error {
 	if m.createJobFn != nil {
 		return m.createJobFn(ctx, job)
+	}
+	return nil
+}
+
+func (m *mockStore) QueueJob(ctx context.Context, jobID string) error {
+	if m.queueJobFn != nil {
+		return m.queueJobFn(ctx, jobID)
 	}
 	return nil
 }

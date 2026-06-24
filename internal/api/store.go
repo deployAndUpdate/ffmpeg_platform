@@ -11,6 +11,7 @@ import (
 // JobStore abstracts persistence for HTTP handlers (enables unit tests without PostgreSQL).
 type JobStore interface {
 	CreateJob(ctx context.Context, job *types.Job) error
+	QueueJob(ctx context.Context, jobID string) error
 	GetJob(ctx context.Context, id string) (*types.Job, error)
 	GetJobLogs(ctx context.Context, jobID string) ([]types.JobLog, error)
 	RegisterWorker(ctx context.Context, w *types.Worker) error

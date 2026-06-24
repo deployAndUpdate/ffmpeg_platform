@@ -409,19 +409,23 @@
 
       <h3><code>internal/ffmpeg</code></h3>
       <p data-i18n="components.ffmpeg">Обёртка над <code>exec ffmpeg</code>: сбор stdout/stderr построчно, проверка входного файла, создание директории для выхода.</p>
+
+      <h3><code>internal/storage</code></h3>
+      <p data-i18n="components.storage">Cloudflare R2 (S3-compatible): presigned upload/download, download/upload объектов для воркера.</p>
     </section>
 
     <section id="job-lifecycle">
       <h2 data-i18n="jobLifecycle.title">Жизненный цикл Job</h2>
-      <div class="diagram">QUEUED ──► RUNNING ──► COMPLETED
-   ▲            │
-   │            ▼
- RETRY ◄──── FAILED (attempt ≥ max_attempts)</div>
+      <div class="diagram">NEW ──► QUEUED ──► RUNNING ──► COMPLETED
+ (R2)      ▲            │
+            │            ▼
+         RETRY ◄──── FAILED (attempt ≥ max_attempts)</div>
       <table>
         <thead>
           <tr><th data-i18n="jobLifecycle.col.status">Статус</th><th data-i18n="jobLifecycle.col.desc">Описание</th></tr>
         </thead>
         <tbody>
+          <tr><td><code>NEW</code></td><td data-i18n="jobLifecycle.new">R2 job создан, ожидает загрузки входного файла</td></tr>
           <tr><td><code>QUEUED</code></td><td data-i18n="jobLifecycle.queued">Задание создано и ждёт воркера</td></tr>
           <tr><td><code>RUNNING</code></td><td data-i18n="jobLifecycle.running">Назначено воркеру, установлен lease</td></tr>
           <tr><td><code>COMPLETED</code></td><td data-i18n="jobLifecycle.completed">Успешно завершено (финальный статус)</td></tr>
@@ -430,7 +434,8 @@
         </tbody>
       </table>
       <p data-i18n="jobLifecycle.note">
-        При создании job через API статус сразу <code>QUEUED</code>.
+        Локальный job через <code>POST /jobs</code> сразу получает статус <code>QUEUED</code>.
+        R2 job через <code>POST /jobs/init</code> начинается со статуса <code>NEW</code> и переходит в <code>QUEUED</code> после <code>POST /jobs/{id}/submit</code>.
         При выдаче воркеру <code>attempt</code> увеличивается на 1.
         Статус <code>NEW</code> зарезервирован в схеме БД, но пока не используется в коде.
       </p>
@@ -438,7 +443,7 @@
 
     <section id="database">
       <h2 data-i18n="database.title">База данных</h2>
-      <p data-i18n="database.migration">Миграция: <code>db/migrations/001_init.sql</code></p>
+      <p data-i18n="database.migration">Миграции: <code>db/migrations/001_init.sql</code>, <code>002_storage.sql</code></p>
 
       <h3 data-i18n="database.workersTable">Таблица <code>workers</code></h3>
       <table>
@@ -459,9 +464,10 @@
         <thead><tr><th data-i18n="database.col.field">Поле</th><th data-i18n="database.col.type">Тип</th><th data-i18n="database.col.desc">Описание</th></tr></thead>
         <tbody>
           <tr><td><code>id</code></td><td>UUID</td><td data-i18n="database.jobs.id">Идентификатор job</td></tr>
-          <tr><td><code>input_path</code></td><td>TEXT</td><td data-i18n="database.jobs.input">Путь к входному файлу (на воркере)</td></tr>
-          <tr><td><code>output_path</code></td><td>TEXT</td><td data-i18n="database.jobs.output">Путь к выходному файлу</td></tr>
+          <tr><td><code>input_path</code></td><td>TEXT</td><td data-i18n="database.jobs.input">Локальный путь (worker) или object key в R2</td></tr>
+          <tr><td><code>output_path</code></td><td>TEXT</td><td data-i18n="database.jobs.output">Локальный путь или object key результата</td></tr>
           <tr><td><code>ffmpeg_args</code></td><td>TEXT</td><td data-i18n="database.jobs.ffmpeg">Аргументы ffmpeg (без -i и output)</td></tr>
+          <tr><td><code>storage</code></td><td>TEXT</td><td data-i18n="database.jobs.storage"><code>local</code> или <code>r2</code></td></tr>
           <tr><td><code>status</code></td><td>TEXT</td><td data-i18n="database.jobs.status">Статус жизненного цикла</td></tr>
           <tr><td><code>assigned_worker_id</code></td><td>UUID</td><td data-i18n="database.jobs.worker">Текущий воркер</td></tr>
           <tr><td><code>attempt</code></td><td>INTEGER</td><td data-i18n="database.jobs.attempt">Номер попытки</td></tr>
@@ -490,8 +496,16 @@
       <h3>Jobs</h3>
       <table>
         <tr>
+          <td><span class="method method-post">POST</span> <code>/jobs/init</code></td>
+          <td data-i18n="api.jobs.init">Создать R2 job и получить presigned URL для upload</td>
+        </tr>
+        <tr>
+          <td><span class="method method-post">POST</span> <code>/jobs/{id}/submit</code></td>
+          <td data-i18n="api.jobs.submit">Подтвердить upload и поставить job в очередь</td>
+        </tr>
+        <tr>
           <td><span class="method method-post">POST</span> <code>/jobs</code></td>
-          <td data-i18n="api.jobs.create">Создать job</td>
+          <td data-i18n="api.jobs.create">Создать локальный job (пути на диске воркера)</td>
         </tr>
         <tr>
           <td><span class="method method-get">GET</span> <code>/jobs/{id}</code></td>
@@ -510,7 +524,35 @@
   "ffmpeg_args": "-c:v libx264 -crf 23",
   "max_attempts": 3
 }</code></pre>
-      <p data-i18n="api.jobs.postNote">Обязательные поля: <code>input_path</code>, <code>output_path</code>, <code>ffmpeg_args</code>. Ответ: <code>201 Created</code> с объектом job.</p>
+      <p data-i18n="api.jobs.postNote">Обязательные поля: <code>input_path</code>, <code>output_path</code>, <code>ffmpeg_args</code>. Ответ: <code>201 Created</code> с объектом job (<code>storage: "local"</code>).</p>
+
+      <h3 data-i18n="api.r2.title">Cloudflare R2 (object storage)</h3>
+      <p data-i18n="api.r2.intro">Если заданы переменные <code>R2_*</code>, scheduler и worker используют R2. Клиент загружает файл напрямую в bucket по presigned URL; воркер скачивает объект, обрабатывает ffmpeg и загружает результат обратно.</p>
+
+      <p data-i18n="api.r2.initBody"><strong>POST /jobs/init</strong> — тело запроса:</p>
+      <pre><code>{
+  "ffmpeg_args": "-vn -acodec libmp3lame -b:a 192k",
+  "input_filename": "video.mp4",
+  "output_ext": "mp3",
+  "max_attempts": 3
+}</code></pre>
+      <p data-i18n="api.r2.initNote">Ответ <code>201 Created</code>: объект <code>job</code> (<code>status: "NEW"</code>), <code>upload_url</code>, <code>upload_expires_at</code>, <code>bucket</code>.</p>
+
+      <pre><code># 1. Создать job и получить upload URL
+curl -s -X POST http://localhost:8080/jobs/init \
+  -H "Content-Type: application/json" \
+  -d '{"ffmpeg_args":"-vn -acodec libmp3lame -b:a 192k","input_filename":"video.mp4","output_ext":"mp3"}' | jq
+
+# 2. Загрузить файл в R2 (URL из upload_url)
+curl -X PUT "$UPLOAD_URL" --upload-file ./video.mp4
+
+# 3. Подтвердить upload
+curl -s -X POST "http://localhost:8080/jobs/$JOB_ID/submit" | jq
+
+# 4. После COMPLETED — download_url в GET /jobs/{id}
+curl -s "http://localhost:8080/jobs/$JOB_ID" | jq '.download_url'</code></pre>
+
+      <p data-i18n="api.r2.downloadNote">Для job со статусом <code>COMPLETED</code> и <code>storage: "r2"</code> ответ <code>GET /jobs/{id}</code> содержит <code>download_url</code> и <code>download_expires_at</code> (presigned GET).</p>
 
       <p data-i18n="api.jobs.logsBody"><strong>GET /jobs/{id}/logs</strong> — ответ <code>200 OK</code> или <code>404</code>, если job не найден:</p>
       <pre><code>{
@@ -576,8 +618,15 @@
         <tbody>
           <tr><td><code>DB_DSN</code></td><td data-i18n="env.yes">да</td><td>—</td><td data-i18n="env.scheduler.db">PostgreSQL connection string</td></tr>
           <tr><td><code>SCHEDULER_ADDR</code></td><td data-i18n="env.no">нет</td><td><code>:8080</code></td><td data-i18n="env.scheduler.addr">Адрес HTTP-сервера</td></tr>
+          <tr><td><code>R2_ACCESS_KEY_ID</code></td><td data-i18n="env.no">нет*</td><td>—</td><td data-i18n="env.r2.key">R2 API token access key</td></tr>
+          <tr><td><code>R2_SECRET_ACCESS_KEY</code></td><td data-i18n="env.no">нет*</td><td>—</td><td data-i18n="env.r2.secret">R2 API token secret</td></tr>
+          <tr><td><code>R2_BUCKET</code></td><td data-i18n="env.no">нет*</td><td>—</td><td data-i18n="env.r2.bucket">Имя bucket</td></tr>
+          <tr><td><code>R2_ENDPOINT</code></td><td data-i18n="env.no">нет*</td><td>—</td><td data-i18n="env.r2.endpoint">S3 endpoint из Cloudflare R2, напр. <code>https://&lt;account_id&gt;.r2.cloudflarestorage.com</code></td></tr>
+          <tr><td><code>R2_PRESIGN_UPLOAD_TTL</code></td><td data-i18n="env.no">нет</td><td><code>1h</code></td><td data-i18n="env.r2.uploadTTL">Срок presigned PUT</td></tr>
+          <tr><td><code>R2_PRESIGN_DOWNLOAD_TTL</code></td><td data-i18n="env.no">нет</td><td><code>1h</code></td><td data-i18n="env.r2.downloadTTL">Срок presigned GET</td></tr>
         </tbody>
       </table>
+      <p data-i18n="env.r2.note">* Для R2-flow нужны вместе: <code>R2_BUCKET</code>, <code>R2_ACCESS_KEY_ID</code>, <code>R2_SECRET_ACCESS_KEY</code>, <code>R2_ENDPOINT</code> — на scheduler и worker.</p>
 
       <h3 data-i18n="env.worker">Worker (<code>cmd/worker</code>)</h3>
       <table>
@@ -591,6 +640,8 @@
           <tr><td><code>WORKER_GPU_AVAILABLE</code></td><td data-i18n="env.no">нет</td><td><code>false</code></td><td data-i18n="env.worker.gpu"><code>true</code> или <code>1</code> для GPU</td></tr>
           <tr><td><code>WORKER_HEARTBEAT_INTERVAL</code></td><td data-i18n="env.no">нет</td><td><code>10s</code></td><td data-i18n="env.worker.heartbeat">Интервал heartbeat</td></tr>
           <tr><td><code>WORKER_POLL_INTERVAL</code></td><td data-i18n="env.no">нет</td><td><code>2s</code></td><td data-i18n="env.worker.poll">Пауза при пустой очереди</td></tr>
+          <tr><td><code>WORKER_TEMP_DIR</code></td><td data-i18n="env.no">нет</td><td><code>/tmp/jobs</code></td><td data-i18n="env.worker.temp">Временные файлы при R2 job</td></tr>
+          <tr><td><code>R2_*</code></td><td data-i18n="env.no">нет*</td><td>—</td><td data-i18n="env.r2.worker">Те же переменные, что у scheduler</td></tr>
         </tbody>
       </table>
     </section>
@@ -710,6 +761,7 @@ docker compose down -v       # удалить volumes (данные БД и /dat
 ├── internal/
 │   ├── api/                # HTTP handlers + JobStore interface
 │   ├── ffmpeg/             # Запуск ffmpeg
+│   ├── storage/            # Cloudflare R2 (S3 API)
 │   ├── store/              # PostgreSQL слой
 │   ├── testutil/           # Хелперы integration-тестов (build tag integration)
 │   ├── types/              # Доменные типы
@@ -851,7 +903,9 @@ make ci</code></pre>
         'components.store': 'Слой доступа к PostgreSQL: CRUD для jobs и workers, атомарная выдача заданий, запись логов в транзакции.',
         'components.workerPkg': 'Клиент scheduler API и основной цикл воркера: polling, запуск ffmpeg, отправка результата.',
         'components.ffmpeg': 'Обёртка над <code>exec ffmpeg</code>: сбор stdout/stderr построчно, проверка входного файла, создание директории для выхода.',
+        'components.storage': 'Cloudflare R2 (S3-compatible): presigned upload/download, download/upload объектов для воркера.',
         'jobLifecycle.title': 'Жизненный цикл Job',
+        'jobLifecycle.new': 'R2 job создан, ожидает загрузки входного файла',
         'jobLifecycle.col.status': 'Статус',
         'jobLifecycle.col.desc': 'Описание',
         'jobLifecycle.queued': 'Задание создано и ждёт воркера',
@@ -859,9 +913,9 @@ make ci</code></pre>
         'jobLifecycle.completed': 'Успешно завершено (финальный статус)',
         'jobLifecycle.failed': 'Исчерпаны попытки (<code>attempt ≥ max_attempts</code>)',
         'jobLifecycle.retry': 'Ошибка выполнения, будет повторно поставлено в очередь',
-        'jobLifecycle.note': 'При создании job через API статус сразу <code>QUEUED</code>. При выдаче воркеру <code>attempt</code> увеличивается на 1. Статус <code>NEW</code> зарезервирован в схеме БД, но пока не используется в коде.',
+        'jobLifecycle.note': 'Локальный job через <code>POST /jobs</code> сразу получает статус <code>QUEUED</code>. R2 job через <code>POST /jobs/init</code> начинается со статуса <code>NEW</code> и переходит в <code>QUEUED</code> после <code>POST /jobs/{id}/submit</code>. При выдаче воркеру <code>attempt</code> увеличивается на 1.',
         'database.title': 'База данных',
-        'database.migration': 'Миграция: <code>db/migrations/001_init.sql</code>',
+        'database.migration': 'Миграции: <code>db/migrations/001_init.sql</code>, <code>002_storage.sql</code>',
         'database.workersTable': 'Таблица <code>workers</code>',
         'database.jobsTable': 'Таблица <code>jobs</code>',
         'database.logsTable': 'Таблица <code>job_logs</code>',
@@ -876,9 +930,10 @@ make ci</code></pre>
         'database.workers.heartbeat': 'Последний heartbeat',
         'database.workers.status': '<code>ACTIVE</code> | <code>DEAD</code>',
         'database.jobs.id': 'Идентификатор job',
-        'database.jobs.input': 'Путь к входному файлу (на воркере)',
-        'database.jobs.output': 'Путь к выходному файлу',
+        'database.jobs.input': 'Локальный путь (worker) или object key в R2',
+        'database.jobs.output': 'Локальный путь или object key результата',
         'database.jobs.ffmpeg': 'Аргументы ffmpeg (без -i и output)',
+        'database.jobs.storage': '<code>local</code> или <code>r2</code>',
         'database.jobs.status': 'Статус жизненного цикла',
         'database.jobs.worker': 'Текущий воркер',
         'database.jobs.attempt': 'Номер попытки',
@@ -889,11 +944,18 @@ make ci</code></pre>
         'api.intro': 'Базовый URL: <code>http://&lt;scheduler-host&gt;:8080</code>. Все тела запросов — JSON.',
         'api.health': 'Health',
         'api.healthDesc': 'Проверка доступности scheduler',
-        'api.jobs.create': 'Создать job',
+        'api.jobs.init': 'Создать R2 job и получить presigned URL для upload',
+        'api.jobs.submit': 'Подтвердить upload и поставить job в очередь',
+        'api.jobs.create': 'Создать локальный job (пути на диске воркера)',
         'api.jobs.get': 'Получить job по ID',
         'api.jobs.logs': 'Логи stdout/stderr job (по попыткам, в порядке времени)',
         'api.jobs.postBody': '<strong>POST /jobs</strong> — тело запроса:',
-        'api.jobs.postNote': 'Обязательные поля: <code>input_path</code>, <code>output_path</code>, <code>ffmpeg_args</code>. Ответ: <code>201 Created</code> с объектом job.',
+        'api.jobs.postNote': 'Обязательные поля: <code>input_path</code>, <code>output_path</code>, <code>ffmpeg_args</code>. Ответ: <code>201 Created</code> с объектом job (<code>storage: "local"</code>).',
+        'api.r2.title': 'Cloudflare R2 (object storage)',
+        'api.r2.intro': 'Если заданы переменные <code>R2_*</code>, scheduler и worker используют R2. Клиент загружает файл напрямую в bucket по presigned URL; воркер скачивает объект, обрабатывает ffmpeg и загружает результат обратно.',
+        'api.r2.initBody': '<strong>POST /jobs/init</strong> — тело запроса:',
+        'api.r2.initNote': 'Ответ <code>201 Created</code>: объект <code>job</code> (<code>status: "NEW"</code>), <code>upload_url</code>, <code>upload_expires_at</code>, <code>bucket</code>.',
+        'api.r2.downloadNote': 'Для job со статусом <code>COMPLETED</code> и <code>storage: "r2"</code> ответ <code>GET /jobs/{id}</code> содержит <code>download_url</code> и <code>download_expires_at</code> (presigned GET).',
         'api.jobs.logsBody': '<strong>GET /jobs/{id}/logs</strong> — ответ <code>200 OK</code> или <code>404</code>, если job не найден:',
         'api.jobs.logsNote': 'При отсутствии логов возвращается пустой массив <code>logs</code>. Записи упорядочены по <code>ts</code>, затем по <code>id</code>.',
         'api.workers.register': 'Регистрация или обновление воркера',
@@ -923,6 +985,15 @@ make ci</code></pre>
         'env.worker.gpu': '<code>true</code> или <code>1</code> для GPU',
         'env.worker.heartbeat': 'Интервал heartbeat',
         'env.worker.poll': 'Пауза при пустой очереди',
+        'env.worker.temp': 'Временные файлы при R2 job',
+        'env.r2.key': 'R2 API token access key',
+        'env.r2.secret': 'R2 API token secret',
+        'env.r2.bucket': 'Имя bucket',
+        'env.r2.endpoint': 'S3 endpoint из Cloudflare R2, напр. <code>https://&lt;account_id&gt;.r2.cloudflarestorage.com</code>',
+        'env.r2.uploadTTL': 'Срок presigned PUT',
+        'env.r2.downloadTTL': 'Срок presigned GET',
+        'env.r2.note': '* Для R2-flow нужны вместе: <code>R2_BUCKET</code>, <code>R2_ACCESS_KEY_ID</code>, <code>R2_SECRET_ACCESS_KEY</code>, <code>R2_ENDPOINT</code> — на scheduler и worker.',
+        'env.r2.worker': 'Те же переменные, что у scheduler',
         'quickstart.title': 'Быстрый старт',
         'quickstart.intro': 'Рекомендуемый способ — <a href="#docker">Docker Compose</a>. Ниже — локальный запуск без контейнеров.',
         'quickstart.step1': 'Поднять PostgreSQL и применить миграцию:',
@@ -1017,17 +1088,19 @@ make ci</code></pre>
         'components.store': 'PostgreSQL access layer: CRUD for jobs and workers, atomic dispatch, transactional log writes.',
         'components.workerPkg': 'Scheduler API client and worker loop: polling, ffmpeg execution, result upload.',
         'components.ffmpeg': 'Wrapper around <code>exec ffmpeg</code>: line-by-line stdout/stderr capture, input validation, output directory creation.',
+        'components.storage': 'Cloudflare R2 (S3-compatible): presigned upload/download, object download/upload for workers.',
         'jobLifecycle.title': 'Job lifecycle',
         'jobLifecycle.col.status': 'Status',
         'jobLifecycle.col.desc': 'Description',
+        'jobLifecycle.new': 'R2 job created, waiting for input upload',
         'jobLifecycle.queued': 'Job created, waiting for a worker',
         'jobLifecycle.running': 'Assigned to a worker, lease set',
         'jobLifecycle.completed': 'Completed successfully (final status)',
         'jobLifecycle.failed': 'Attempts exhausted (<code>attempt ≥ max_attempts</code>)',
         'jobLifecycle.retry': 'Execution error, will be re-queued',
-        'jobLifecycle.note': 'Jobs created via API start as <code>QUEUED</code>. On dispatch, <code>attempt</code> increments by 1. Status <code>NEW</code> is reserved in the DB schema but not used in code yet.',
+        'jobLifecycle.note': 'Local jobs via <code>POST /jobs</code> start as <code>QUEUED</code>. R2 jobs via <code>POST /jobs/init</code> start as <code>NEW</code> and move to <code>QUEUED</code> after <code>POST /jobs/{id}/submit</code>. On dispatch, <code>attempt</code> increments by 1.',
         'database.title': 'Database',
-        'database.migration': 'Migration: <code>db/migrations/001_init.sql</code>',
+        'database.migration': 'Migrations: <code>db/migrations/001_init.sql</code>, <code>002_storage.sql</code>',
         'database.workersTable': 'Table <code>workers</code>',
         'database.jobsTable': 'Table <code>jobs</code>',
         'database.logsTable': 'Table <code>job_logs</code>',
@@ -1042,9 +1115,10 @@ make ci</code></pre>
         'database.workers.heartbeat': 'Last heartbeat',
         'database.workers.status': '<code>ACTIVE</code> | <code>DEAD</code>',
         'database.jobs.id': 'Job identifier',
-        'database.jobs.input': 'Input file path (on worker)',
-        'database.jobs.output': 'Output file path',
+        'database.jobs.input': 'Local worker path or R2 object key',
+        'database.jobs.output': 'Local path or output object key',
         'database.jobs.ffmpeg': 'ffmpeg args (without -i and output)',
+        'database.jobs.storage': '<code>local</code> or <code>r2</code>',
         'database.jobs.status': 'Lifecycle status',
         'database.jobs.worker': 'Current worker',
         'database.jobs.attempt': 'Attempt number',
@@ -1055,11 +1129,18 @@ make ci</code></pre>
         'api.intro': 'Base URL: <code>http://&lt;scheduler-host&gt;:8080</code>. All request bodies are JSON.',
         'api.health': 'Health',
         'api.healthDesc': 'Scheduler availability check',
-        'api.jobs.create': 'Create a job',
+        'api.jobs.init': 'Create R2 job and get presigned upload URL',
+        'api.jobs.submit': 'Confirm upload and queue the job',
+        'api.jobs.create': 'Create local job (paths on worker disk)',
         'api.jobs.get': 'Get job by ID',
         'api.jobs.logs': 'Job stdout/stderr logs (by attempt, chronological)',
         'api.jobs.postBody': '<strong>POST /jobs</strong> — request body:',
-        'api.jobs.postNote': 'Required fields: <code>input_path</code>, <code>output_path</code>, <code>ffmpeg_args</code>. Response: <code>201 Created</code> with job object.',
+        'api.jobs.postNote': 'Required fields: <code>input_path</code>, <code>output_path</code>, <code>ffmpeg_args</code>. Response: <code>201 Created</code> with job object (<code>storage: "local"</code>).',
+        'api.r2.title': 'Cloudflare R2 (object storage)',
+        'api.r2.intro': 'When <code>R2_*</code> env vars are set, scheduler and worker use R2. The client uploads directly to the bucket via presigned URL; the worker downloads, runs ffmpeg, and uploads the result.',
+        'api.r2.initBody': '<strong>POST /jobs/init</strong> — request body:',
+        'api.r2.initNote': 'Response <code>201 Created</code>: <code>job</code> object (<code>status: "NEW"</code>), <code>upload_url</code>, <code>upload_expires_at</code>, <code>bucket</code>.',
+        'api.r2.downloadNote': 'For <code>COMPLETED</code> jobs with <code>storage: "r2"</code>, <code>GET /jobs/{id}</code> includes <code>download_url</code> and <code>download_expires_at</code> (presigned GET).',
         'api.jobs.logsBody': '<strong>GET /jobs/{id}/logs</strong> — response <code>200 OK</code> or <code>404</code> if job not found:',
         'api.jobs.logsNote': 'Returns empty <code>logs</code> array when no logs exist. Ordered by <code>ts</code>, then <code>id</code>.',
         'api.workers.register': 'Register or update worker',
@@ -1089,6 +1170,15 @@ make ci</code></pre>
         'env.worker.gpu': '<code>true</code> or <code>1</code> for GPU',
         'env.worker.heartbeat': 'Heartbeat interval',
         'env.worker.poll': 'Pause when queue is empty',
+        'env.worker.temp': 'Temp files for R2 jobs',
+        'env.r2.key': 'R2 API token access key',
+        'env.r2.secret': 'R2 API token secret',
+        'env.r2.bucket': 'Bucket name',
+        'env.r2.endpoint': 'S3 endpoint from Cloudflare R2, e.g. <code>https://&lt;account_id&gt;.r2.cloudflarestorage.com</code>',
+        'env.r2.uploadTTL': 'Presigned PUT lifetime',
+        'env.r2.downloadTTL': 'Presigned GET lifetime',
+        'env.r2.note': '* R2 flow requires <code>R2_BUCKET</code>, <code>R2_ACCESS_KEY_ID</code>, <code>R2_SECRET_ACCESS_KEY</code>, and <code>R2_ENDPOINT</code> on both scheduler and worker.',
+        'env.r2.worker': 'Same variables as scheduler',
         'quickstart.title': 'Quick start',
         'quickstart.intro': 'Recommended: <a href="#docker">Docker Compose</a>. Below — local run without containers.',
         'quickstart.step1': 'Start PostgreSQL and apply migration:',
@@ -1183,17 +1273,19 @@ make ci</code></pre>
         'components.store': 'Шар доступу до PostgreSQL: CRUD для jobs і workers, атомарна видача завдань, запис логів у транзакції.',
         'components.workerPkg': 'Клієнт scheduler API та основний цикл воркера: polling, запуск ffmpeg, надсилання результату.',
         'components.ffmpeg': 'Обгортка над <code>exec ffmpeg</code>: збір stdout/stderr по рядках, перевірка вхідного файлу, створення директорії для виходу.',
+        'components.storage': 'Cloudflare R2 (S3-compatible): presigned upload/download, download/upload об\'єктів для воркера.',
         'jobLifecycle.title': 'Життєвий цикл Job',
         'jobLifecycle.col.status': 'Статус',
         'jobLifecycle.col.desc': 'Опис',
+        'jobLifecycle.new': 'R2 job створено, очікує завантаження вхідного файлу',
         'jobLifecycle.queued': 'Завдання створено і чекає воркера',
         'jobLifecycle.running': 'Призначено воркеру, встановлено lease',
         'jobLifecycle.completed': 'Успішно завершено (фінальний статус)',
         'jobLifecycle.failed': 'Вичерпано спроби (<code>attempt ≥ max_attempts</code>)',
         'jobLifecycle.retry': 'Помилка виконання, буде повторно поставлено в чергу',
-        'jobLifecycle.note': 'При створенні job через API статус одразу <code>QUEUED</code>. При видачі воркеру <code>attempt</code> збільшується на 1. Статус <code>NEW</code> зарезервовано в схемі БД, але поки не використовується в коді.',
+        'jobLifecycle.note': 'Локальний job через <code>POST /jobs</code> одразу отримує статус <code>QUEUED</code>. R2 job через <code>POST /jobs/init</code> починається зі статусу <code>NEW</code> і переходить у <code>QUEUED</code> після <code>POST /jobs/{id}/submit</code>. При видачі воркеру <code>attempt</code> збільшується на 1.',
         'database.title': 'База даних',
-        'database.migration': 'Міграція: <code>db/migrations/001_init.sql</code>',
+        'database.migration': 'Міграції: <code>db/migrations/001_init.sql</code>, <code>002_storage.sql</code>',
         'database.workersTable': 'Таблиця <code>workers</code>',
         'database.jobsTable': 'Таблиця <code>jobs</code>',
         'database.logsTable': 'Таблиця <code>job_logs</code>',
@@ -1208,9 +1300,10 @@ make ci</code></pre>
         'database.workers.heartbeat': 'Останній heartbeat',
         'database.workers.status': '<code>ACTIVE</code> | <code>DEAD</code>',
         'database.jobs.id': 'Ідентифікатор job',
-        'database.jobs.input': 'Шлях до вхідного файлу (на воркері)',
-        'database.jobs.output': 'Шлях до вихідного файлу',
+        'database.jobs.input': 'Локальний шлях (worker) або object key в R2',
+        'database.jobs.output': 'Локальний шлях або object key результату',
         'database.jobs.ffmpeg': 'Аргументи ffmpeg (без -i та output)',
+        'database.jobs.storage': '<code>local</code> або <code>r2</code>',
         'database.jobs.status': 'Статус життєвого циклу',
         'database.jobs.worker': 'Поточний воркер',
         'database.jobs.attempt': 'Номер спроби',
@@ -1221,11 +1314,18 @@ make ci</code></pre>
         'api.intro': 'Базовий URL: <code>http://&lt;scheduler-host&gt;:8080</code>. Усі тіла запитів — JSON.',
         'api.health': 'Health',
         'api.healthDesc': 'Перевірка доступності scheduler',
-        'api.jobs.create': 'Створити job',
+        'api.jobs.init': 'Створити R2 job і отримати presigned URL для upload',
+        'api.jobs.submit': 'Підтвердити upload і поставити job у чергу',
+        'api.jobs.create': 'Створити локальний job (шляхи на диску воркера)',
         'api.jobs.get': 'Отримати job за ID',
         'api.jobs.logs': 'Логи stdout/stderr job (за спробами, у хронологічному порядку)',
         'api.jobs.postBody': '<strong>POST /jobs</strong> — тіло запиту:',
-        'api.jobs.postNote': 'Обов\'язкові поля: <code>input_path</code>, <code>output_path</code>, <code>ffmpeg_args</code>. Відповідь: <code>201 Created</code> з об\'єктом job.',
+        'api.jobs.postNote': 'Обов\'язкові поля: <code>input_path</code>, <code>output_path</code>, <code>ffmpeg_args</code>. Відповідь: <code>201 Created</code> з об\'єктом job (<code>storage: "local"</code>).',
+        'api.r2.title': 'Cloudflare R2 (object storage)',
+        'api.r2.intro': 'Якщо задані змінні <code>R2_*</code>, scheduler і worker використовують R2. Клієнт завантажує файл напряму в bucket за presigned URL; воркер завантажує об\'єкт, обробляє ffmpeg і вивантажує результат.',
+        'api.r2.initBody': '<strong>POST /jobs/init</strong> — тіло запиту:',
+        'api.r2.initNote': 'Відповідь <code>201 Created</code>: об\'єкт <code>job</code> (<code>status: "NEW"</code>), <code>upload_url</code>, <code>upload_expires_at</code>, <code>bucket</code>.',
+        'api.r2.downloadNote': 'Для job зі статусом <code>COMPLETED</code> і <code>storage: "r2"</code> відповідь <code>GET /jobs/{id}</code> містить <code>download_url</code> та <code>download_expires_at</code> (presigned GET).',
         'api.jobs.logsBody': '<strong>GET /jobs/{id}/logs</strong> — відповідь <code>200 OK</code> або <code>404</code>, якщо job не знайдено:',
         'api.jobs.logsNote': 'При відсутності логів повертається порожній масив <code>logs</code>. Записи впорядковані за <code>ts</code>, потім за <code>id</code>.',
         'api.workers.register': 'Реєстрація або оновлення воркера',
@@ -1255,6 +1355,15 @@ make ci</code></pre>
         'env.worker.gpu': '<code>true</code> або <code>1</code> для GPU',
         'env.worker.heartbeat': 'Інтервал heartbeat',
         'env.worker.poll': 'Пауза при порожній черзі',
+        'env.worker.temp': 'Тимчасові файли для R2 job',
+        'env.r2.key': 'R2 API token access key',
+        'env.r2.secret': 'R2 API token secret',
+        'env.r2.bucket': "Ім'я bucket",
+        'env.r2.endpoint': 'S3 endpoint з Cloudflare R2, напр. <code>https://&lt;account_id&gt;.r2.cloudflarestorage.com</code>',
+        'env.r2.uploadTTL': 'Термін presigned PUT',
+        'env.r2.downloadTTL': 'Термін presigned GET',
+        'env.r2.note': '* Для R2-flow потрібні разом: <code>R2_BUCKET</code>, <code>R2_ACCESS_KEY_ID</code>, <code>R2_SECRET_ACCESS_KEY</code>, <code>R2_ENDPOINT</code> — на scheduler і worker.',
+        'env.r2.worker': 'Ті самі змінні, що у scheduler',
         'quickstart.title': 'Швидкий старт',
         'quickstart.intro': 'Рекомендований спосіб — <a href="#docker">Docker Compose</a>. Нижче — локальний запуск без контейнерів.',
         'quickstart.step1': 'Підняти PostgreSQL і застосувати міграцію:',

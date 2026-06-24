@@ -4,10 +4,13 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
 	"go_distributed_system/internal/ffmpeg"
+	"go_distributed_system/internal/storage"
 	"go_distributed_system/internal/types"
 )
 
@@ -19,21 +22,27 @@ type Config struct {
 	GPUAvailable    bool
 	MaxParallelJobs int
 	SchedulerURL    string
+	TempDir         string
 	HeartbeatEvery  time.Duration
 	PollInterval    time.Duration
 }
 
 // Worker pulls jobs from the scheduler and runs ffmpeg.
 type Worker struct {
-	cfg    Config
-	client *Client
+	cfg     Config
+	client  *Client
+	storage storage.ObjectStorage
 }
 
 // New creates a worker instance.
-func New(cfg Config) *Worker {
+func New(cfg Config, obj storage.ObjectStorage) *Worker {
+	if cfg.TempDir == "" {
+		cfg.TempDir = "/tmp/jobs"
+	}
 	return &Worker{
-		cfg:    cfg,
-		client: NewClient(cfg.SchedulerURL),
+		cfg:     cfg,
+		client:  NewClient(cfg.SchedulerURL),
+		storage: obj,
 	}
 }
 
@@ -121,6 +130,13 @@ func (w *Worker) processOne(ctx context.Context) {
 }
 
 func (w *Worker) runJob(ctx context.Context, job types.Job) (bool, []types.JobLogEntry) {
+	if job.Storage == types.StorageR2 {
+		return w.runJobR2(ctx, job)
+	}
+	return w.runJobLocal(ctx, job)
+}
+
+func (w *Worker) runJobLocal(ctx context.Context, job types.Job) (bool, []types.JobLogEntry) {
 	if err := ffmpeg.EnsureInputExists(job.InputPath); err != nil {
 		log.Printf("job %s input check: %v", job.ID, err)
 		return false, []types.JobLogEntry{{Stream: "stderr", Line: err.Error()}}
@@ -140,6 +156,65 @@ func (w *Worker) runJob(ctx context.Context, job types.Job) (bool, []types.JobLo
 		logs = append(logs, types.JobLogEntry{Stream: "stderr", Line: result.Err.Error()})
 		return false, logs
 	}
+	return true, result.Logs
+}
+
+func (w *Worker) runJobR2(ctx context.Context, job types.Job) (bool, []types.JobLogEntry) {
+	if w.storage == nil {
+		err := fmt.Errorf("R2 storage is not configured on worker")
+		log.Printf("job %s: %v", job.ID, err)
+		return false, []types.JobLogEntry{{Stream: "stderr", Line: err.Error()}}
+	}
+
+	workDir, err := os.MkdirTemp(w.cfg.TempDir, job.ID+"-*")
+	if err != nil {
+		log.Printf("job %s temp dir: %v", job.ID, err)
+		return false, []types.JobLogEntry{{Stream: "stderr", Line: err.Error()}}
+	}
+	defer os.RemoveAll(workDir)
+
+	inputExt := filepath.Ext(job.InputPath)
+	if inputExt == "" {
+		inputExt = ".bin"
+	}
+	outputExt := filepath.Ext(job.OutputPath)
+	if outputExt == "" {
+		outputExt = ".bin"
+	}
+
+	localInput := filepath.Join(workDir, "input"+inputExt)
+	localOutput := filepath.Join(workDir, "output"+outputExt)
+
+	if err := w.storage.Download(ctx, job.InputPath, localInput); err != nil {
+		log.Printf("job %s download input: %v", job.ID, err)
+		return false, []types.JobLogEntry{{Stream: "stderr", Line: err.Error()}}
+	}
+
+	localJob := job
+	localJob.InputPath = localInput
+	localJob.OutputPath = localOutput
+
+	result := ffmpeg.Run(ctx, localJob)
+	if result.Err != nil {
+		log.Printf("job %s ffmpeg error: %v", job.ID, result.Err)
+		logs := result.Logs
+		if logs == nil {
+			logs = []types.JobLogEntry{}
+		}
+		logs = append(logs, types.JobLogEntry{Stream: "stderr", Line: result.Err.Error()})
+		return false, logs
+	}
+
+	if err := w.storage.Upload(ctx, localOutput, job.OutputPath); err != nil {
+		log.Printf("job %s upload output: %v", job.ID, err)
+		logs := result.Logs
+		if logs == nil {
+			logs = []types.JobLogEntry{}
+		}
+		logs = append(logs, types.JobLogEntry{Stream: "stderr", Line: err.Error()})
+		return false, logs
+	}
+
 	return true, result.Logs
 }
 

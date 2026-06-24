@@ -46,14 +46,18 @@ func (s *Store) Close() error {
 
 // CreateJob inserts a new job with initial status/attempts.
 func (s *Store) CreateJob(ctx context.Context, job *types.Job) error {
+	if job.Storage == "" {
+		job.Storage = types.StorageLocal
+	}
 	const q = `
-INSERT INTO jobs (id, input_path, output_path, ffmpeg_args, status, attempt, max_attempts, created_at, updated_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())`
+INSERT INTO jobs (id, input_path, output_path, ffmpeg_args, storage, status, attempt, max_attempts, created_at, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())`
 	_, err := s.db.ExecContext(ctx, q,
 		job.ID,
 		job.InputPath,
 		job.OutputPath,
 		job.FFmpegArgs,
+		job.Storage,
 		job.Status,
 		job.Attempt,
 		job.MaxAttempts,
@@ -61,10 +65,30 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())`
 	return err
 }
 
+// QueueJob moves a NEW job to QUEUED after input upload is confirmed.
+func (s *Store) QueueJob(ctx context.Context, jobID string) error {
+	const q = `
+UPDATE jobs
+SET status = 'QUEUED', updated_at = NOW()
+WHERE id = $1 AND status = 'NEW'`
+	res, err := s.db.ExecContext(ctx, q, jobID)
+	if err != nil {
+		return err
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
 // GetJob returns a job by ID.
 func (s *Store) GetJob(ctx context.Context, id string) (*types.Job, error) {
 	const q = `
-SELECT id, input_path, output_path, ffmpeg_args, status, assigned_worker_id,
+SELECT id, input_path, output_path, ffmpeg_args, storage, status, assigned_worker_id,
        attempt, max_attempts, lease_expires_at, created_at, started_at, finished_at, updated_at
 FROM jobs
 WHERE id = $1`

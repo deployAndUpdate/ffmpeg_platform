@@ -80,23 +80,44 @@ func applyMigration(dsn string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	var exists bool
-	if err := db.QueryRowContext(ctx, `
+	if err := execMigrationFile(ctx, db, "001_init.sql"); err != nil {
+		return err
+	}
+	return execMigrationFile(ctx, db, "002_storage.sql")
+}
+
+func execMigrationFile(ctx context.Context, db *sql.DB, name string) error {
+	checkColumn := name == "002_storage.sql"
+	if checkColumn {
+		var exists bool
+		if err := db.QueryRowContext(ctx, `
+SELECT EXISTS (
+	SELECT FROM information_schema.columns
+	WHERE table_schema = 'public' AND table_name = 'jobs' AND column_name = 'storage'
+)`).Scan(&exists); err != nil {
+			return err
+		}
+		if exists {
+			return nil
+		}
+	} else {
+		var exists bool
+		if err := db.QueryRowContext(ctx, `
 SELECT EXISTS (
 	SELECT FROM information_schema.tables
 	WHERE table_schema = 'public' AND table_name = 'jobs'
 )`).Scan(&exists); err != nil {
-		return err
-	}
-	if exists {
-		return nil
+			return err
+		}
+		if exists {
+			return nil
+		}
 	}
 
-	sqlBytes, err := os.ReadFile(migrationPath())
+	sqlBytes, err := os.ReadFile(filepath.Join(migrationsDir(), name))
 	if err != nil {
 		return err
 	}
-
 	_, err = db.ExecContext(ctx, string(sqlBytes))
 	return err
 }
@@ -112,10 +133,10 @@ func resetTables(ctx context.Context, dsn string) error {
 	return err
 }
 
-func migrationPath() string {
+func migrationsDir() string {
 	_, file, _, ok := runtime.Caller(0)
 	if !ok {
-		return "db/migrations/001_init.sql"
+		return "db/migrations"
 	}
-	return filepath.Join(filepath.Dir(file), "..", "..", "db", "migrations", "001_init.sql")
+	return filepath.Join(filepath.Dir(file), "..", "..", "db", "migrations")
 }

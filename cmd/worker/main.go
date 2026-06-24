@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"go_distributed_system/internal/storage"
 	"go_distributed_system/internal/worker"
 
 	"github.com/google/uuid"
@@ -61,14 +62,25 @@ func main() {
 		GPUAvailable:    gpuAvailable,
 		MaxParallelJobs: maxParallel,
 		SchedulerURL:    schedulerURL,
+		TempDir:         os.Getenv("WORKER_TEMP_DIR"),
 		HeartbeatEvery:  envDuration("WORKER_HEARTBEAT_INTERVAL", 10*time.Second),
 		PollInterval:     envDuration("WORKER_POLL_INTERVAL", 2*time.Second),
+	}
+
+	var objStorage storage.ObjectStorage
+	if _, ok := storage.ConfigFromEnv(); ok {
+		obj, err := storage.NewFromEnv()
+		if err != nil {
+			log.Fatalf("init R2 storage: %v", err)
+		}
+		objStorage = obj
+		log.Printf("R2 storage enabled (bucket=%s)", obj.Bucket())
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	w := worker.New(cfg)
+	w := worker.New(cfg, objStorage)
 	log.Printf("starting worker %s (%s), parallel=%d", cfg.ID, cfg.Hostname, cfg.MaxParallelJobs)
 	if err := w.Run(ctx); err != nil && err != context.Canceled {
 		log.Fatalf("worker stopped: %v", err)

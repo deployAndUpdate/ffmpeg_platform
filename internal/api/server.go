@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"go_distributed_system/internal/store"
+	"go_distributed_system/internal/storage"
 	"go_distributed_system/internal/types"
 	webdocs "go_distributed_system/web/docs"
 
@@ -20,15 +21,24 @@ import (
 
 // Server bundles HTTP handlers for the scheduler.
 type Server struct {
-	store JobStore
-	mux   *http.ServeMux
+	store         JobStore
+	storage       storage.ObjectStorage
+	storageConfig storage.Config
+	mux           *http.ServeMux
 }
 
-// NewServer wires routes and dependencies.
+// NewServer wires routes and dependencies (local-path jobs only).
 func NewServer(st JobStore) *Server {
+	return NewServerWithStorage(st, nil, storage.Config{})
+}
+
+// NewServerWithStorage enables R2 object-storage job flow when storage is non-nil.
+func NewServerWithStorage(st JobStore, obj storage.ObjectStorage, cfg storage.Config) *Server {
 	s := &Server{
-		store: st,
-		mux:   http.NewServeMux(),
+		store:         st,
+		storage:       obj,
+		storageConfig: cfg,
+		mux:           http.NewServeMux(),
 	}
 	s.registerRoutes()
 	return s
@@ -41,6 +51,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/health", s.handleHealth)
+	s.mux.HandleFunc("/jobs/init", s.handleJobsInit)
 	s.mux.HandleFunc("/jobs", s.handleJobs)
 	s.mux.HandleFunc("/jobs/", s.handleJobByID)
 
@@ -92,6 +103,11 @@ func (s *Server) handleJobByID(w http.ResponseWriter, r *http.Request) {
 
 	if len(parts) == 2 && parts[1] == "logs" && r.Method == http.MethodGet {
 		s.getJobLogs(w, r, id)
+		return
+	}
+
+	if len(parts) == 2 && parts[1] == "submit" && r.Method == http.MethodPost {
+		s.submitR2Job(w, r, id)
 		return
 	}
 
@@ -169,6 +185,7 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 		InputPath:   body.InputPath,
 		OutputPath:  body.OutputPath,
 		FFmpegArgs:  body.FFmpegArgs,
+		Storage:     types.StorageLocal,
 		Status:      types.JobStatusQueued,
 		Attempt:     0,
 		MaxAttempts: body.MaxAttempts,
@@ -197,7 +214,7 @@ func (s *Server) getJob(w http.ResponseWriter, r *http.Request, id string) {
 		http.Error(w, "failed to get job", http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, http.StatusOK, job)
+	writeJSON(w, http.StatusOK, s.jobResponse(ctx, job))
 }
 
 func (s *Server) getJobLogs(w http.ResponseWriter, r *http.Request, id string) {

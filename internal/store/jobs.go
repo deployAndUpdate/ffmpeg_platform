@@ -32,7 +32,7 @@ SET status = 'RUNNING',
     updated_at = NOW()
 FROM next_job
 WHERE j.id = next_job.id
-RETURNING j.id, j.input_path, j.output_path, j.ffmpeg_args, j.status, j.assigned_worker_id,
+RETURNING j.id, j.input_path, j.output_path, j.ffmpeg_args, j.storage, j.status, j.assigned_worker_id,
           j.attempt, j.max_attempts, j.lease_expires_at, j.created_at, j.started_at, j.finished_at, j.updated_at`
 
 	leaseSeconds := int64(lease.Seconds())
@@ -162,12 +162,14 @@ func scanJob(row scanner) (*types.Job, error) {
 	var lease sql.NullTime
 	var started sql.NullTime
 	var finished sql.NullTime
+	var storage string
 
 	if err := row.Scan(
 		&j.ID,
 		&j.InputPath,
 		&j.OutputPath,
 		&j.FFmpegArgs,
+		&storage,
 		&j.Status,
 		&assigned,
 		&j.Attempt,
@@ -180,6 +182,7 @@ func scanJob(row scanner) (*types.Job, error) {
 	); err != nil {
 		return nil, err
 	}
+	j.Storage = types.StorageMode(storage)
 	if assigned.Valid {
 		j.AssignedWorkerID = &assigned.String
 	}

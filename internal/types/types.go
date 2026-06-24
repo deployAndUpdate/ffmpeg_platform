@@ -4,6 +4,14 @@ import (
 	"time"
 )
 
+// StorageMode indicates where job input/output files are stored.
+type StorageMode string
+
+const (
+	StorageLocal StorageMode = "local"
+	StorageR2    StorageMode = "r2"
+)
+
 // JobStatus represents the lifecycle of a compression job.
 type JobStatus string
 
@@ -26,11 +34,12 @@ const (
 
 // Job defines the domain model of a compression task.
 type Job struct {
-	ID               string     `json:"id"`
-	InputPath        string     `json:"input_path"`
-	OutputPath       string     `json:"output_path"`
-	FFmpegArgs       string     `json:"ffmpeg_args"`
-	Status           JobStatus  `json:"status"`
+	ID               string      `json:"id"`
+	InputPath        string      `json:"input_path"`
+	OutputPath       string      `json:"output_path"`
+	FFmpegArgs       string      `json:"ffmpeg_args"`
+	Storage          StorageMode `json:"storage"`
+	Status           JobStatus   `json:"status"`
 	AssignedWorkerID *string    `json:"assigned_worker_id,omitempty"`
 	Attempt          int        `json:"attempt"`
 	MaxAttempts      int        `json:"max_attempts"`

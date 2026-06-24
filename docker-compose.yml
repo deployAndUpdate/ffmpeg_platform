@@ -14,6 +14,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./db/migrations/001_init.sql:/docker-entrypoint-initdb.d/001_init.sql:ro
+      - ./db/migrations/002_storage.sql:/docker-entrypoint-initdb.d/002_storage.sql:ro
       - ./docker/postgres/postgresql.conf:/etc/postgresql/postgresql.conf:ro
     command: ["postgres", "-c", "config_file=/etc/postgresql/postgresql.conf"]
     healthcheck:
@@ -37,6 +38,13 @@ services:
     environment:
       DB_DSN: postgres://${POSTGRES_USER:-video}:${POSTGRES_PASSWORD:-video}@postgres:5432/${POSTGRES_DB:-video}?sslmode=disable
       SCHEDULER_ADDR: :8080
+      R2_ACCESS_KEY_ID: ${R2_ACCESS_KEY_ID:-}
+      R2_SECRET_ACCESS_KEY: ${R2_SECRET_ACCESS_KEY:-}
+      R2_BUCKET: ${R2_BUCKET:-}
+      R2_ENDPOINT: ${R2_ENDPOINT:-}
+      R2_REGION: ${R2_REGION:-auto}
+      R2_PRESIGN_UPLOAD_TTL: ${R2_PRESIGN_UPLOAD_TTL:-1h}
+      R2_PRESIGN_DOWNLOAD_TTL: ${R2_PRESIGN_DOWNLOAD_TTL:-1h}
     ports:
       - "${SCHEDULER_PORT:-8080}:8080"
     healthcheck:
@@ -61,6 +69,12 @@ services:
       SCHEDULER_URL: http://scheduler:8080
       WORKER_MAX_PARALLEL_JOBS: ${WORKER_MAX_PARALLEL_JOBS:-1}
       WORKER_GPU_AVAILABLE: ${WORKER_GPU_AVAILABLE:-false}
+      WORKER_TEMP_DIR: ${WORKER_TEMP_DIR:-/tmp/jobs}
+      R2_ACCESS_KEY_ID: ${R2_ACCESS_KEY_ID:-}
+      R2_SECRET_ACCESS_KEY: ${R2_SECRET_ACCESS_KEY:-}
+      R2_BUCKET: ${R2_BUCKET:-}
+      R2_ENDPOINT: ${R2_ENDPOINT:-}
+      R2_REGION: ${R2_REGION:-auto}
     volumes:
       - jobdata:/data
     networks:
