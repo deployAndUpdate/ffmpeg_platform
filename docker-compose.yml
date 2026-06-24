@@ -38,6 +38,8 @@ services:
     environment:
       DB_DSN: postgres://${POSTGRES_USER:-video}:${POSTGRES_PASSWORD:-video}@postgres:5432/${POSTGRES_DB:-video}?sslmode=disable
       SCHEDULER_ADDR: :8080
+      MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-536870912}
+      SCHEDULER_UPLOAD_TIMEOUT: ${SCHEDULER_UPLOAD_TIMEOUT:-30m}
       R2_ACCESS_KEY_ID: ${R2_ACCESS_KEY_ID:-}
       R2_SECRET_ACCESS_KEY: ${R2_SECRET_ACCESS_KEY:-}
       R2_BUCKET: ${R2_BUCKET:-}

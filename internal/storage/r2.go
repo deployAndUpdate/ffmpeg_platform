@@ -148,11 +148,27 @@ func (r *R2) Upload(ctx context.Context, localPath, key string) error {
 	}
 	defer f.Close()
 
-	_, err = r.client.PutObject(ctx, &s3.PutObjectInput{
+	info, err := f.Stat()
+	if err != nil {
+		return fmt.Errorf("stat local file: %w", err)
+	}
+	return r.UploadReader(ctx, key, f, info.Size(), "")
+}
+
+func (r *R2) UploadReader(ctx context.Context, key string, body io.Reader, size int64, contentType string) error {
+	input := &s3.PutObjectInput{
 		Bucket: aws.String(r.bucket),
 		Key:    aws.String(key),
-		Body:   f,
-	})
+		Body:   body,
+	}
+	if size > 0 {
+		input.ContentLength = aws.Int64(size)
+	}
+	if contentType != "" {
+		input.ContentType = aws.String(contentType)
+	}
+
+	_, err := r.client.PutObject(ctx, input)
 	if err != nil {
 		return fmt.Errorf("put object %q: %w", key, err)
 	}

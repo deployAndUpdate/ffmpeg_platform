@@ -49,6 +49,9 @@ func (m *mockObjectStorage) Exists(ctx context.Context, key string) (bool, error
 }
 func (m *mockObjectStorage) Download(context.Context, string, string) error { return nil }
 func (m *mockObjectStorage) Upload(context.Context, string, string) error   { return nil }
+func (m *mockObjectStorage) UploadReader(context.Context, string, io.Reader, int64, string) error {
+	return nil
+}
 
 func newTestServerWithStorage(st JobStore, obj storage.ObjectStorage) *httptest.Server {
 	return httptest.NewServer(NewServerWithStorage(st, obj, storage.Config{

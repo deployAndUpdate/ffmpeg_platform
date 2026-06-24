@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"fmt"
+	"io"
 	"time"
 )
 
@@ -16,6 +17,7 @@ type ObjectStorage interface {
 	Exists(ctx context.Context, key string) (bool, error)
 	Download(ctx context.Context, key, localPath string) error
 	Upload(ctx context.Context, localPath, key string) error
+	UploadReader(ctx context.Context, key string, r io.Reader, size int64, contentType string) error
 }
 
 // NewFromEnv creates an R2 client when env vars are set.
