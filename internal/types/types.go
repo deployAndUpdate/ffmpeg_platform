@@ -59,3 +59,11 @@ type JobLogEntry struct {
 	Stream string `json:"stream"`
 	Line   string `json:"line"`
 }
+
+// JobLog is a persisted log line returned by GET /jobs/{id}/logs.
+type JobLog struct {
+	ID     int64     `json:"id"`
+	TS     time.Time `json:"ts"`
+	Stream string    `json:"stream"`
+	Line   string    `json:"line"`
+}

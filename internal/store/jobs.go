@@ -118,6 +118,31 @@ WHERE id = $1 AND assigned_worker_id = $2 AND status = 'RUNNING'`
 	return tx.Commit()
 }
 
+// GetJobLogs returns log lines for a job ordered by timestamp.
+func (s *Store) GetJobLogs(ctx context.Context, jobID string) ([]types.JobLog, error) {
+	const q = `
+SELECT id, ts, stream, line
+FROM job_logs
+WHERE job_id = $1
+ORDER BY ts ASC, id ASC`
+
+	rows, err := s.db.QueryContext(ctx, q, jobID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var logs []types.JobLog
+	for rows.Next() {
+		var entry types.JobLog
+		if err := rows.Scan(&entry.ID, &entry.TS, &entry.Stream, &entry.Line); err != nil {
+			return nil, err
+		}
+		logs = append(logs, entry)
+	}
+	return logs, rows.Err()
+}
+
 func insertJobLogsTx(ctx context.Context, tx *sql.Tx, jobID string, logs []types.JobLogEntry) error {
 	if len(logs) == 0 {
 		return nil

@@ -91,7 +91,7 @@ func (s *Server) handleJobByID(w http.ResponseWriter, r *http.Request) {
 	id := parts[0]
 
 	if len(parts) == 2 && parts[1] == "logs" && r.Method == http.MethodGet {
-		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "GET /jobs/{id}/logs not implemented yet"})
+		s.getJobLogs(w, r, id)
 		return
 	}
 
@@ -198,6 +198,36 @@ func (s *Server) getJob(w http.ResponseWriter, r *http.Request, id string) {
 		return
 	}
 	writeJSON(w, http.StatusOK, job)
+}
+
+func (s *Server) getJobLogs(w http.ResponseWriter, r *http.Request, id string) {
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	if _, err := s.store.GetJob(ctx, id); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			http.NotFound(w, r)
+			return
+		}
+		log.Printf("get job for logs: %v", err)
+		http.Error(w, "failed to get job", http.StatusInternalServerError)
+		return
+	}
+
+	logs, err := s.store.GetJobLogs(ctx, id)
+	if err != nil {
+		log.Printf("get job logs: %v", err)
+		http.Error(w, "failed to get job logs", http.StatusInternalServerError)
+		return
+	}
+	if logs == nil {
+		logs = []types.JobLog{}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"job_id": id,
+		"logs":   logs,
+	})
 }
 
 func (s *Server) workerRegister(w http.ResponseWriter, r *http.Request) {

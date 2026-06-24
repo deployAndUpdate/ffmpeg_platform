@@ -463,7 +463,7 @@
         </tr>
         <tr>
           <td><span class="method method-get">GET</span> <code>/jobs/{id}/logs</code></td>
-          <td><span class="badge badge-todo">не реализовано</span></td>
+          <td>Логи stdout/stderr job (по попыткам, в порядке времени)</td>
         </tr>
       </table>
 
@@ -475,6 +475,15 @@
   "max_attempts": 3
 }</code></pre>
       <p>Обязательные поля: <code>input_path</code>, <code>output_path</code>, <code>ffmpeg_args</code>. Ответ: <code>201 Created</code> с объектом job.</p>
+
+      <p><strong>GET /jobs/{id}/logs</strong> — ответ <code>200 OK</code> или <code>404</code>, если job не найден:</p>
+      <pre><code>{
+  "job_id": "uuid",
+  "logs": [
+    { "id": 1, "ts": "2026-06-24T12:00:00Z", "stream": "stderr", "line": "..." }
+  ]
+}</code></pre>
+      <p>При отсутствии логов возвращается пустой массив <code>logs</code>. Записи упорядочены по <code>ts</code>, затем по <code>id</code>.</p>
 
       <h3>Workers</h3>
       <table>
@@ -678,7 +687,6 @@ docker compose down -v       # удалить volumes (данные БД и /dat
     <section id="limitations">
       <h2>Ограничения и TODO</h2>
       <ul>
-        <li><span class="badge badge-todo">TODO</span> <code>GET /jobs/{id}/logs</code> — эндпоинт возвращает 501</li>
         <li><span class="badge badge-todo">TODO</span> Фоновый reaper для DEAD воркеров и истёкших lease</li>
         <li><span class="badge badge-todo">TODO</span> Автоматический мигратор для локального запуска (в Docker init SQL применяется при первом старте postgres)</li>
         <li>At-least-once семантика — возможны дублирующиеся запуски ffmpeg</li>
