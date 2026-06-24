@@ -19,7 +19,7 @@ test-db-down:
 	$(COMPOSE_TEST) down -v
 
 test-integration: test-db-up
-	TEST_DB_DSN=$(TEST_DB_DSN) go test -race -count=1 -p 1 -tags=integration ./internal/store/... ./internal/api/...
+	TEST_DB_DSN=$(TEST_DB_DSN) go test -race -count=1 -p 1 -tags=integration ./internal/store/... ./internal/api/... ./internal/reaper/...
 
 test-all: test test-integration
 

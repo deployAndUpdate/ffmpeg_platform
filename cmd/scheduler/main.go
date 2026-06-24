@@ -1,12 +1,16 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"go_distributed_system/internal/api"
+	"go_distributed_system/internal/reaper"
 	"go_distributed_system/internal/storage"
 	"go_distributed_system/internal/store"
 )
@@ -32,6 +36,12 @@ func main() {
 		}
 	}()
 
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	r := reaper.New(st, reaper.ConfigFromEnv())
+	go r.Run(ctx)
+
 	var handler http.Handler
 	if cfg, ok := storage.ConfigFromEnv(); ok {
 		obj, err := storage.NewR2(cfg)
@@ -54,9 +64,20 @@ func main() {
 		WriteTimeout:      uploadTimeout + 30*time.Second,
 	}
 
-	log.Printf("scheduler listening on %s (upload timeout %s, max upload %d bytes)",
-		addr, uploadTimeout, api.MaxUploadBytesFromEnv())
-	if err := srv.ListenAndServe(); err != nil {
-		log.Fatalf("http server error: %v", err)
+	go func() {
+		log.Printf("scheduler listening on %s (upload timeout %s, max upload %d bytes)",
+			addr, uploadTimeout, api.MaxUploadBytesFromEnv())
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("http server error: %v", err)
+		}
+	}()
+
+	<-ctx.Done()
+	log.Println("shutting down scheduler")
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		log.Printf("http shutdown: %v", err)
 	}
 }

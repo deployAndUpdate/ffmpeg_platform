@@ -68,7 +68,6 @@ make ci                # full local CI suite
 
 ## Known limitations
 
-- No background reaper for dead workers and expired leases
 - No standalone migration tool (Docker applies init SQL on first postgres start)
 - GPU/CPU filters are not used when dispatching jobs
 
@@ -78,6 +77,7 @@ make ci                # full local CI suite
 cmd/scheduler/   HTTP API server
 cmd/worker/      ffmpeg worker
 internal/api/    HTTP handlers
+internal/reaper/  background reaper loop
 internal/store/  PostgreSQL layer
 internal/worker/ worker client and loop
 internal/ffmpeg/ ffmpeg wrapper
