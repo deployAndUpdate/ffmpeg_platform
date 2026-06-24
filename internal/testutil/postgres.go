@@ -5,9 +5,11 @@ package testutil
 import (
 	"context"
 	"database/sql"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -19,8 +21,8 @@ import (
 
 var migrateOnce sync.Once
 
-// OpenStore connects to PostgreSQL using DB_DSN and returns a ready store.
-// Skips the test when DB_DSN is unset (unit/short runs).
+// OpenStore connects to the dedicated test database (TEST_DB_DSN).
+// Refuses non-test database names to avoid touching dev/prod data.
 func OpenStore(t *testing.T) (*store.Store, func()) {
 	t.Helper()
 
@@ -28,10 +30,11 @@ func OpenStore(t *testing.T) (*store.Store, func()) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	dsn := os.Getenv("DB_DSN")
+	dsn := os.Getenv("TEST_DB_DSN")
 	if dsn == "" {
-		t.Skip("DB_DSN not set")
+		t.Skip("TEST_DB_DSN not set (run: make test-integration)")
 	}
+	assertTestDatabase(t, dsn)
 
 	migrateOnce.Do(func() {
 		if err := applyMigration(dsn); err != nil {
@@ -46,12 +49,25 @@ func OpenStore(t *testing.T) (*store.Store, func()) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if err := resetTables(ctx, st); err != nil {
+	if err := resetTables(ctx, dsn); err != nil {
 		_ = st.Close()
 		t.Fatalf("reset tables: %v", err)
 	}
 
 	return st, func() { _ = st.Close() }
+}
+
+func assertTestDatabase(t *testing.T, dsn string) {
+	t.Helper()
+
+	u, err := url.Parse(dsn)
+	if err != nil {
+		t.Fatalf("parse TEST_DB_DSN: %v", err)
+	}
+	dbName := strings.TrimPrefix(u.Path, "/")
+	if dbName == "" || !strings.HasSuffix(dbName, "_test") {
+		t.Fatalf("integration tests require a database name ending with _test, got %q", dbName)
+	}
 }
 
 func applyMigration(dsn string) error {
@@ -85,10 +101,8 @@ SELECT EXISTS (
 	return err
 }
 
-func resetTables(ctx context.Context, st *store.Store) error {
-	// Store does not expose DB; use a fresh connection with the same DSN pattern.
-	// resetTables is called right after OpenStore which already validated DSN via env.
-	db, err := sql.Open("postgres", os.Getenv("DB_DSN"))
+func resetTables(ctx context.Context, dsn string) error {
+	db, err := sql.Open("postgres", dsn)
 	if err != nil {
 		return err
 	}

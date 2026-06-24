@@ -683,6 +683,7 @@ docker compose down -v       # удалить volumes (данные БД и /dat
 ├── web/docs/               # HTML документация + embed
 ├── Dockerfile              # scheduler + worker targets
 ├── docker-compose.yml
+├── docker-compose.test.yml # PostgreSQL для integration-тестов (порт 5433)
 ├── Makefile                # test, test-integration, ci
 ├── .env.example
 └── go.mod</code></pre>
@@ -692,20 +693,30 @@ docker compose down -v       # удалить volumes (данные БД и /dat
       <h2>Тесты и CI</h2>
       <p>
         Unit-тесты не требуют PostgreSQL: HTTP handlers используют интерфейс <code>api.JobStore</code>
-        с mock-реализацией. Integration-тесты (build tag <code>integration</code>) подключаются к PostgreSQL
-        через переменную <code>DB_DSN</code>.
+        с mock-реализацией. Integration-тесты (build tag <code>integration</code>) подключаются
+        <strong>только</strong> к тестовой БД через <code>TEST_DB_DSN</code> (имя базы должно оканчиваться на <code>_test</code>).
+        Dev-база из <code>docker-compose.yml</code> (порт 5432) не используется.
       </p>
 
       <h3>Локальный запуск</h3>
       <pre><code># unit-тесты (быстро, без БД)
 make test
 
-# integration (нужен PostgreSQL, например docker compose up -d postgres)
-export DB_DSN=postgres://video:video@localhost:5432/video?sslmode=disable
+# integration: поднимает postgres-test на порту 5433, прогоняет тесты, данные в tmpfs
 make test-integration
+
+# остановить тестовый postgres
+make test-db-down
 
 # полный набор как в CI
 make ci</code></pre>
+
+      <p>
+        Тестовый PostgreSQL описан в <code>docker-compose.test.yml</code>:
+        пользователь/БД <code>video_test</code>, порт <code>5433</code>.
+        DSN по умолчанию:
+        <code>postgres://video_test:video_test@127.0.0.1:5433/video_test?sslmode=disable</code>
+      </p>
 
       <h3>Пирамида тестов</h3>
       <table>

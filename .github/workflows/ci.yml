@@ -65,7 +65,7 @@ jobs:
           --health-timeout 5s
           --health-retries 10
     env:
-      DB_DSN: postgres://video:video@localhost:5432/video_test?sslmode=disable
+      TEST_DB_DSN: postgres://video:video@localhost:5432/video_test?sslmode=disable
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
