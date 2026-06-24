@@ -42,7 +42,11 @@ NEW → QUEUED → RUNNING → COMPLETED
 - Нет фонового reaper'а для DEAD воркеров и истекших lease.
 - Нет мигратора; sql-файл лежит в `db/migrations/001_init.sql`.
 
-## Запуск (набросок)
+## Запуск
+
+**Docker (рекомендуется):** см. раздел [Docker](http://localhost:8080/docs/#docker) в веб-документации или `docker compose up --build -d` после `cp .env.example .env`.
+
+**Локально (набросок):**
 1. Поднять PostgreSQL, получить `DB_DSN`, применить миграцию из `db/migrations/001_init.sql`.
 2. `export DB_DSN=...; export SCHEDULER_ADDR=:8080`
 3. `go run ./cmd/scheduler`
