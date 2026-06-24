@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"io/fs"
 	"log"
 	"net/http"
 	"strings"
@@ -12,6 +13,7 @@ import (
 
 	"go_distributed_system/internal/store"
 	"go_distributed_system/internal/types"
+	webdocs "go_distributed_system/web/docs"
 
 	"github.com/google/uuid"
 )
@@ -46,6 +48,21 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/workers/heartbeat", s.handleWorkerHeartbeat)
 	s.mux.HandleFunc("/workers/request-job", s.handleWorkerRequestJob)
 	s.mux.HandleFunc("/workers/job-result", s.handleWorkerJobResult)
+
+	s.registerDocsRoutes()
+}
+
+func (s *Server) registerDocsRoutes() {
+	sub, err := fs.Sub(webdocs.FS, ".")
+	if err != nil {
+		log.Printf("docs fs: %v", err)
+		return
+	}
+	fileServer := http.FileServer(http.FS(sub))
+	s.mux.Handle("/docs/", http.StripPrefix("/docs/", fileServer))
+	s.mux.HandleFunc("/docs", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/docs/", http.StatusMovedPermanently)
+	})
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
@@ -107,7 +124,7 @@ func (s *Server) handleWorkerRequestJob(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "POST /workers/request-job not implemented yet"})
+	s.workerRequestJob(w, r)
 }
 
 func (s *Server) handleWorkerJobResult(w http.ResponseWriter, r *http.Request) {
@@ -115,7 +132,7 @@ func (s *Server) handleWorkerJobResult(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "POST /workers/job-result not implemented yet"})
+	s.workerJobResult(w, r)
 }
 
 func writeJSON(w http.ResponseWriter, status int, payload any) {
@@ -249,6 +266,66 @@ func (s *Server) workerHeartbeat(w http.ResponseWriter, r *http.Request) {
 		}
 		log.Printf("heartbeat: %v", err)
 		http.Error(w, "failed to update heartbeat", http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+const defaultJobLease = 30 * time.Minute
+
+func (s *Server) workerRequestJob(w http.ResponseWriter, r *http.Request) {
+	type req struct {
+		WorkerID string `json:"worker_id"`
+	}
+	var body req
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "invalid json", http.StatusBadRequest)
+		return
+	}
+	if body.WorkerID == "" {
+		http.Error(w, "worker_id is required", http.StatusBadRequest)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	job, err := s.store.AcquireJob(ctx, body.WorkerID, defaultJobLease)
+	if err != nil {
+		log.Printf("acquire job: %v", err)
+		http.Error(w, "failed to acquire job", http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"job": job})
+}
+
+func (s *Server) workerJobResult(w http.ResponseWriter, r *http.Request) {
+	type req struct {
+		WorkerID string              `json:"worker_id"`
+		JobID    string              `json:"job_id"`
+		Success  bool                `json:"success"`
+		Logs     []types.JobLogEntry `json:"logs"`
+	}
+	var body req
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "invalid json", http.StatusBadRequest)
+		return
+	}
+	if body.WorkerID == "" || body.JobID == "" {
+		http.Error(w, "worker_id and job_id are required", http.StatusBadRequest)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancel()
+
+	if err := s.store.FinishJob(ctx, body.JobID, body.WorkerID, body.Success, body.Logs); err != nil {
+		if errors.Is(err, store.ErrJobNotAssigned) {
+			http.Error(w, "job not assigned to worker or not running", http.StatusConflict)
+			return
+		}
+		log.Printf("finish job: %v", err)
+		http.Error(w, "failed to finish job", http.StatusInternalServerError)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})

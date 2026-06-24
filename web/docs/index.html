@@ -1,0 +1,634 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>go_distributed_system — документация</title>
+  <style>
+    :root {
+      --bg: #0f1419;
+      --surface: #1a2332;
+      --surface-hover: #243044;
+      --border: #2d3a4f;
+      --text: #e6edf3;
+      --text-muted: #8b9cb3;
+      --accent: #3b82f6;
+      --accent-soft: rgba(59, 130, 246, 0.15);
+      --green: #22c55e;
+      --yellow: #eab308;
+      --red: #ef4444;
+      --code-bg: #0d1117;
+      --sidebar-w: 260px;
+      --radius: 10px;
+      --font: "Segoe UI", system-ui, -apple-system, sans-serif;
+      --mono: "Cascadia Code", "Fira Code", "JetBrains Mono", Consolas, monospace;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      font-family: var(--font);
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.65;
+      display: flex;
+      min-height: 100vh;
+    }
+
+    nav {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: var(--sidebar-w);
+      height: 100vh;
+      overflow-y: auto;
+      background: var(--surface);
+      border-right: 1px solid var(--border);
+      padding: 1.5rem 0;
+      z-index: 10;
+    }
+
+    nav .logo {
+      padding: 0 1.25rem 1.25rem;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 1rem;
+    }
+
+    nav .logo h1 {
+      font-size: 0.95rem;
+      font-weight: 700;
+      color: var(--text);
+      line-height: 1.3;
+    }
+
+    nav .logo p {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      margin-top: 0.25rem;
+    }
+
+    nav ul { list-style: none; }
+
+    nav a {
+      display: block;
+      padding: 0.45rem 1.25rem;
+      color: var(--text-muted);
+      text-decoration: none;
+      font-size: 0.875rem;
+      transition: color 0.15s, background 0.15s;
+    }
+
+    nav a:hover, nav a.active {
+      color: var(--accent);
+      background: var(--accent-soft);
+    }
+
+    main {
+      margin-left: var(--sidebar-w);
+      flex: 1;
+      max-width: 900px;
+      padding: 2.5rem 3rem 4rem;
+    }
+
+    section {
+      margin-bottom: 3rem;
+      scroll-margin-top: 1.5rem;
+    }
+
+    h2 {
+      font-size: 1.6rem;
+      font-weight: 700;
+      margin-bottom: 1rem;
+      padding-bottom: 0.5rem;
+      border-bottom: 1px solid var(--border);
+    }
+
+    h3 {
+      font-size: 1.1rem;
+      font-weight: 600;
+      margin: 1.5rem 0 0.75rem;
+      color: var(--text);
+    }
+
+    p { margin-bottom: 0.85rem; color: var(--text-muted); }
+    p strong { color: var(--text); }
+
+    .badge {
+      display: inline-block;
+      padding: 0.15rem 0.55rem;
+      border-radius: 999px;
+      font-size: 0.72rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    .badge-mvp { background: var(--accent-soft); color: var(--accent); }
+    .badge-done { background: rgba(34, 197, 94, 0.15); color: var(--green); }
+    .badge-todo { background: rgba(234, 179, 8, 0.15); color: var(--yellow); }
+
+    .hero {
+      background: linear-gradient(135deg, var(--surface) 0%, #152238 100%);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 2rem;
+      margin-bottom: 2.5rem;
+    }
+
+    .hero h2 { border: none; font-size: 1.85rem; margin-bottom: 0.5rem; }
+    .hero p { font-size: 1.05rem; margin-bottom: 1rem; }
+
+    .hero-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+    }
+
+    pre {
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1rem 1.25rem;
+      overflow-x: auto;
+      font-family: var(--mono);
+      font-size: 0.82rem;
+      line-height: 1.55;
+      margin: 0.75rem 0 1rem;
+      color: #c9d1d9;
+    }
+
+    code {
+      font-family: var(--mono);
+      font-size: 0.85em;
+      background: var(--code-bg);
+      padding: 0.15rem 0.4rem;
+      border-radius: 4px;
+      border: 1px solid var(--border);
+    }
+
+    pre code {
+      background: none;
+      border: none;
+      padding: 0;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 0.75rem 0 1rem;
+      font-size: 0.875rem;
+    }
+
+    th, td {
+      text-align: left;
+      padding: 0.65rem 0.85rem;
+      border: 1px solid var(--border);
+    }
+
+    th {
+      background: var(--surface);
+      color: var(--text);
+      font-weight: 600;
+    }
+
+    td { color: var(--text-muted); }
+    td code { font-size: 0.8em; }
+
+    .diagram {
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.25rem;
+      font-family: var(--mono);
+      font-size: 0.78rem;
+      line-height: 1.5;
+      overflow-x: auto;
+      white-space: pre;
+      color: #a5b4c8;
+      margin: 0.75rem 0 1rem;
+    }
+
+    .card-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 1rem;
+      margin: 1rem 0;
+    }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.15rem;
+    }
+
+    .card h4 {
+      font-size: 0.95rem;
+      margin-bottom: 0.4rem;
+    }
+
+    .card p {
+      font-size: 0.82rem;
+      margin: 0;
+    }
+
+    .method {
+      display: inline-block;
+      min-width: 3.2rem;
+      font-weight: 700;
+      font-size: 0.75rem;
+      font-family: var(--mono);
+    }
+
+    .method-get { color: var(--green); }
+    .method-post { color: var(--accent); }
+
+    ul, ol {
+      margin: 0.5rem 0 1rem 1.25rem;
+      color: var(--text-muted);
+    }
+
+    li { margin-bottom: 0.35rem; }
+
+    footer {
+      margin-top: 3rem;
+      padding-top: 1.5rem;
+      border-top: 1px solid var(--border);
+      font-size: 0.8rem;
+      color: var(--text-muted);
+    }
+
+    @media (max-width: 768px) {
+      nav { display: none; }
+      main { margin-left: 0; padding: 1.5rem; }
+    }
+  </style>
+</head>
+<body>
+  <nav>
+    <div class="logo">
+      <h1>go_distributed_system</h1>
+      <p>Распределённое сжатие видео</p>
+    </div>
+    <ul>
+      <li><a href="#overview">Обзор</a></li>
+      <li><a href="#architecture">Архитектура</a></li>
+      <li><a href="#components">Компоненты</a></li>
+      <li><a href="#job-lifecycle">Жизненный цикл Job</a></li>
+      <li><a href="#database">База данных</a></li>
+      <li><a href="#api">HTTP API</a></li>
+      <li><a href="#env">Переменные окружения</a></li>
+      <li><a href="#quickstart">Быстрый старт</a></li>
+      <li><a href="#structure">Структура проекта</a></li>
+      <li><a href="#limitations">Ограничения и TODO</a></li>
+    </ul>
+  </nav>
+
+  <main>
+    <div class="hero">
+      <h2>Distributed Video Compression Platform</h2>
+      <p>
+        Отказоустойчивая платформа для запуска <code>ffmpeg</code> на нескольких узлах.
+        Планировщик (Scheduler) принимает задания через HTTP API, воркеры забирают их из очереди PostgreSQL
+        и выполняют транскодирование.
+      </p>
+      <div class="hero-meta">
+        <span class="badge badge-mvp">MVP</span>
+        <span class="badge badge-done">Go 1.22</span>
+        <span class="badge badge-done">PostgreSQL</span>
+      </div>
+    </div>
+
+    <section id="overview">
+      <h2>Обзор</h2>
+      <p>
+        Проект реализует минимально жизнеспособную распределённую систему обработки видео.
+        Очередь заданий хранится в PostgreSQL и выдаётся через <code>SELECT … FOR UPDATE SKIP LOCKED</code> —
+        без внешнего брокера сообщений.
+      </p>
+      <div class="card-grid">
+        <div class="card">
+          <h4>Scheduler</h4>
+          <p>HTTP API: создание job, регистрация воркеров, выдача задач, финализация результатов.</p>
+        </div>
+        <div class="card">
+          <h4>Worker</h4>
+          <p>Регистрация, heartbeat, polling заданий, запуск ffmpeg, отправка логов.</p>
+        </div>
+        <div class="card">
+          <h4>PostgreSQL</h4>
+          <p>Единственный источник истины: jobs, workers, job_logs, lease TTL.</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="architecture">
+      <h2>Архитектура</h2>
+      <div class="diagram">┌─────────────┐     HTTP API      ┌──────────────────┐
+│   Client    │ ───────────────► │    Scheduler     │
+│  (curl/API) │                  │  cmd/scheduler   │
+└─────────────┘                  └────────┬─────────┘
+                                          │
+                                          ▼
+                                 ┌──────────────────┐
+                                 │   PostgreSQL     │
+                                 │  jobs / workers  │
+                                 │  job_logs        │
+                                 └────────┬─────────┘
+                                          │
+                    ┌─────────────────────┼─────────────────────┐
+                    ▼                     ▼                     ▼
+             ┌───────────┐         ┌───────────┐         ┌───────────┐
+             │  Worker 1 │         │  Worker 2 │         │  Worker N │
+             │  ffmpeg   │         │  ffmpeg   │         │  ffmpeg   │
+             └───────────┘         └───────────┘         └───────────┘</div>
+      <h3>Ключевые принципы</h3>
+      <ul>
+        <li><strong>At-least-once</strong> — возможны повторные выполнения при сбоях воркера или истечении lease.</li>
+        <li><strong>Lease</strong> — при выдаче job воркеру устанавливается <code>lease_expires_at</code> (по умолчанию 30 мин).</li>
+        <li><strong>SKIP LOCKED</strong> — несколько воркеров могут безопасно конкурировать за задания без блокировок.</li>
+      </ul>
+    </section>
+
+    <section id="components">
+      <h2>Компоненты</h2>
+
+      <h3><code>cmd/scheduler</code></h3>
+      <p>Точка входа HTTP-сервера. Подключается к PostgreSQL через <code>DB_DSN</code>, слушает <code>SCHEDULER_ADDR</code> (по умолчанию <code>:8080</code>).</p>
+
+      <h3><code>cmd/worker</code></h3>
+      <p>Точка входа воркера. Регистрируется в scheduler, шлёт heartbeat, параллельно обрабатывает до <code>max_parallel_jobs</code> заданий.</p>
+
+      <h3><code>internal/api</code></h3>
+      <p>HTTP-хендлеры: создание и получение job, регистрация воркеров, heartbeat, выдача job (<code>AcquireJob</code>), финализация (<code>FinishJob</code>).</p>
+
+      <h3><code>internal/store</code></h3>
+      <p>Слой доступа к PostgreSQL: CRUD для jobs и workers, атомарная выдача заданий, запись логов в транзакции.</p>
+
+      <h3><code>internal/worker</code></h3>
+      <p>Клиент scheduler API и основной цикл воркера: polling, запуск ffmpeg, отправка результата.</p>
+
+      <h3><code>internal/ffmpeg</code></h3>
+      <p>Обёртка над <code>exec ffmpeg</code>: сбор stdout/stderr построчно, проверка входного файла, создание директории для выхода.</p>
+    </section>
+
+    <section id="job-lifecycle">
+      <h2>Жизненный цикл Job</h2>
+      <div class="diagram">QUEUED ──► RUNNING ──► COMPLETED
+   ▲            │
+   │            ▼
+ RETRY ◄──── FAILED (attempt ≥ max_attempts)</div>
+      <table>
+        <thead>
+          <tr><th>Статус</th><th>Описание</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>QUEUED</code></td><td>Задание создано и ждёт воркера</td></tr>
+          <tr><td><code>RUNNING</code></td><td>Назначено воркеру, установлен lease</td></tr>
+          <tr><td><code>COMPLETED</code></td><td>Успешно завершено (финальный статус)</td></tr>
+          <tr><td><code>FAILED</code></td><td>Исчерпаны попытки (<code>attempt ≥ max_attempts</code>)</td></tr>
+          <tr><td><code>RETRY</code></td><td>Ошибка выполнения, будет повторно поставлено в очередь</td></tr>
+        </tbody>
+      </table>
+      <p>
+        При создании job через API статус сразу <code>QUEUED</code>.
+        При выдаче воркеру <code>attempt</code> увеличивается на 1.
+        Статус <code>NEW</code> зарезервирован в схеме БД, но пока не используется в коде.
+      </p>
+    </section>
+
+    <section id="database">
+      <h2>База данных</h2>
+      <p>Миграция: <code>db/migrations/001_init.sql</code></p>
+
+      <h3>Таблица <code>workers</code></h3>
+      <table>
+        <thead><tr><th>Поле</th><th>Тип</th><th>Описание</th></tr></thead>
+        <tbody>
+          <tr><td><code>id</code></td><td>UUID</td><td>Идентификатор воркера</td></tr>
+          <tr><td><code>hostname</code></td><td>TEXT</td><td>Имя хоста</td></tr>
+          <tr><td><code>cpu_cores</code></td><td>INTEGER</td><td>Количество CPU</td></tr>
+          <tr><td><code>gpu_available</code></td><td>BOOLEAN</td><td>Наличие GPU</td></tr>
+          <tr><td><code>max_parallel_jobs</code></td><td>INTEGER</td><td>Лимит параллельных job</td></tr>
+          <tr><td><code>last_heartbeat_at</code></td><td>TIMESTAMPTZ</td><td>Последний heartbeat</td></tr>
+          <tr><td><code>status</code></td><td>TEXT</td><td><code>ACTIVE</code> | <code>DEAD</code></td></tr>
+        </tbody>
+      </table>
+
+      <h3>Таблица <code>jobs</code></h3>
+      <table>
+        <thead><tr><th>Поле</th><th>Тип</th><th>Описание</th></tr></thead>
+        <tbody>
+          <tr><td><code>id</code></td><td>UUID</td><td>Идентификатор job</td></tr>
+          <tr><td><code>input_path</code></td><td>TEXT</td><td>Путь к входному файлу (на воркере)</td></tr>
+          <tr><td><code>output_path</code></td><td>TEXT</td><td>Путь к выходному файлу</td></tr>
+          <tr><td><code>ffmpeg_args</code></td><td>TEXT</td><td>Аргументы ffmpeg (без -i и output)</td></tr>
+          <tr><td><code>status</code></td><td>TEXT</td><td>Статус жизненного цикла</td></tr>
+          <tr><td><code>assigned_worker_id</code></td><td>UUID</td><td>Текущий воркер</td></tr>
+          <tr><td><code>attempt</code></td><td>INTEGER</td><td>Номер попытки</td></tr>
+          <tr><td><code>max_attempts</code></td><td>INTEGER</td><td>Максимум попыток (по умолчанию 3)</td></tr>
+          <tr><td><code>lease_expires_at</code></td><td>TIMESTAMPTZ</td><td>Срок lease при RUNNING</td></tr>
+        </tbody>
+      </table>
+
+      <h3>Таблица <code>job_logs</code></h3>
+      <p>Строки stdout/stderr с таймштампом. Записываются при финализации job в транзакции с обновлением статуса.</p>
+    </section>
+
+    <section id="api">
+      <h2>HTTP API</h2>
+      <p>Базовый URL: <code>http://&lt;scheduler-host&gt;:8080</code>. Все тела запросов — JSON.</p>
+
+      <h3>Health</h3>
+      <table>
+        <tr>
+          <td><span class="method method-get">GET</span> <code>/health</code></td>
+          <td>Проверка доступности scheduler</td>
+        </tr>
+      </table>
+      <pre><code>{ "status": "ok" }</code></pre>
+
+      <h3>Jobs</h3>
+      <table>
+        <tr>
+          <td><span class="method method-post">POST</span> <code>/jobs</code></td>
+          <td>Создать job</td>
+        </tr>
+        <tr>
+          <td><span class="method method-get">GET</span> <code>/jobs/{id}</code></td>
+          <td>Получить job по ID</td>
+        </tr>
+        <tr>
+          <td><span class="method method-get">GET</span> <code>/jobs/{id}/logs</code></td>
+          <td><span class="badge badge-todo">не реализовано</span></td>
+        </tr>
+      </table>
+
+      <p><strong>POST /jobs</strong> — тело запроса:</p>
+      <pre><code>{
+  "input_path": "/data/in/video.mp4",
+  "output_path": "/data/out/video.mp4",
+  "ffmpeg_args": "-c:v libx264 -crf 23",
+  "max_attempts": 3
+}</code></pre>
+      <p>Обязательные поля: <code>input_path</code>, <code>output_path</code>, <code>ffmpeg_args</code>. Ответ: <code>201 Created</code> с объектом job.</p>
+
+      <h3>Workers</h3>
+      <table>
+        <tr>
+          <td><span class="method method-post">POST</span> <code>/workers/register</code></td>
+          <td>Регистрация или обновление воркера</td>
+        </tr>
+        <tr>
+          <td><span class="method method-post">POST</span> <code>/workers/heartbeat</code></td>
+          <td>Heartbeat воркера</td>
+        </tr>
+        <tr>
+          <td><span class="method method-post">POST</span> <code>/workers/request-job</code></td>
+          <td>Запрос следующего job (SKIP LOCKED + lease)</td>
+        </tr>
+        <tr>
+          <td><span class="method method-post">POST</span> <code>/workers/job-result</code></td>
+          <td>Финализация job и запись логов</td>
+        </tr>
+      </table>
+
+      <p><strong>POST /workers/request-job</strong>:</p>
+      <pre><code>{ "worker_id": "uuid" }
+
+// Ответ — job или null, если очередь пуста:
+{ "job": { ... } }</code></pre>
+
+      <p><strong>POST /workers/job-result</strong>:</p>
+      <pre><code>{
+  "worker_id": "uuid",
+  "job_id": "uuid",
+  "success": true,
+  "logs": [
+    { "stream": "stdout", "line": "..." },
+    { "stream": "stderr", "line": "..." }
+  ]
+}</code></pre>
+
+      <h3>Документация</h3>
+      <table>
+        <tr>
+          <td><span class="method method-get">GET</span> <code>/docs/</code></td>
+          <td>Эта страница документации</td>
+        </tr>
+      </table>
+    </section>
+
+    <section id="env">
+      <h2>Переменные окружения</h2>
+
+      <h3>Scheduler (<code>cmd/scheduler</code>)</h3>
+      <table>
+        <thead><tr><th>Переменная</th><th>Обязательна</th><th>По умолчанию</th><th>Описание</th></tr></thead>
+        <tbody>
+          <tr><td><code>DB_DSN</code></td><td>да</td><td>—</td><td>PostgreSQL connection string</td></tr>
+          <tr><td><code>SCHEDULER_ADDR</code></td><td>нет</td><td><code>:8080</code></td><td>Адрес HTTP-сервера</td></tr>
+        </tbody>
+      </table>
+
+      <h3>Worker (<code>cmd/worker</code>)</h3>
+      <table>
+        <thead><tr><th>Переменная</th><th>Обязательна</th><th>По умолчанию</th><th>Описание</th></tr></thead>
+        <tbody>
+          <tr><td><code>SCHEDULER_URL</code></td><td>да</td><td>—</td><td>URL scheduler, напр. <code>http://localhost:8080</code></td></tr>
+          <tr><td><code>WORKER_ID</code></td><td>нет</td><td>random UUID</td><td>ID воркера</td></tr>
+          <tr><td><code>WORKER_HOSTNAME</code></td><td>нет</td><td>os.Hostname()</td><td>Имя хоста</td></tr>
+          <tr><td><code>WORKER_CPU_CORES</code></td><td>нет</td><td>runtime.NumCPU()</td><td>Количество ядер</td></tr>
+          <tr><td><code>WORKER_MAX_PARALLEL_JOBS</code></td><td>нет</td><td><code>1</code></td><td>Параллельные job</td></tr>
+          <tr><td><code>WORKER_GPU_AVAILABLE</code></td><td>нет</td><td><code>false</code></td><td><code>true</code> или <code>1</code> для GPU</td></tr>
+          <tr><td><code>WORKER_HEARTBEAT_INTERVAL</code></td><td>нет</td><td><code>10s</code></td><td>Интервал heartbeat</td></tr>
+          <tr><td><code>WORKER_POLL_INTERVAL</code></td><td>нет</td><td><code>2s</code></td><td>Пауза при пустой очереди</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="quickstart">
+      <h2>Быстрый старт</h2>
+      <ol>
+        <li>Поднять PostgreSQL и применить миграцию:</li>
+      </ol>
+      <pre><code>psql "$DB_DSN" -f db/migrations/001_init.sql</code></pre>
+
+      <ol start="2">
+        <li>Запустить scheduler:</li>
+      </ol>
+      <pre><code>export DB_DSN="postgres://user:pass@localhost:5432/video?sslmode=disable"
+export SCHEDULER_ADDR=":8080"
+go run ./cmd/scheduler</code></pre>
+
+      <ol start="3">
+        <li>Открыть документацию: <a href="/docs/" style="color: var(--accent);">http://localhost:8080/docs/</a></li>
+        <li>Запустить воркер (на машине с ffmpeg и доступом к файлам):</li>
+      </ol>
+      <pre><code>export SCHEDULER_URL="http://localhost:8080"
+go run ./cmd/worker</code></pre>
+
+      <ol start="5">
+        <li>Создать job:</li>
+      </ol>
+      <pre><code>curl -s -X POST http://localhost:8080/jobs \
+  -H "Content-Type: application/json" \
+  -d '{
+    "input_path": "/tmp/in.mp4",
+    "output_path": "/tmp/out.mp4",
+    "ffmpeg_args": "-c:v libx264 -crf 28"
+  }' | jq</code></pre>
+    </section>
+
+    <section id="structure">
+      <h2>Структура проекта</h2>
+      <pre><code>go_distributed_system/
+├── cmd/
+│   ├── scheduler/          # HTTP API сервер
+│   └── worker/             # Воркер ffmpeg
+├── db/migrations/          # SQL миграции
+├── internal/
+│   ├── api/                # HTTP handlers
+│   ├── ffmpeg/             # Запуск ffmpeg
+│   ├── store/              # PostgreSQL слой
+│   ├── types/              # Доменные типы
+│   └── worker/             # Клиент API + цикл воркера
+├── web/docs/               # HTML документация + embed
+└── go.mod</code></pre>
+    </section>
+
+    <section id="limitations">
+      <h2>Ограничения и TODO</h2>
+      <ul>
+        <li><span class="badge badge-todo">TODO</span> <code>GET /jobs/{id}/logs</code> — эндпоинт возвращает 501</li>
+        <li><span class="badge badge-todo">TODO</span> Фоновый reaper для DEAD воркеров и истёкших lease</li>
+        <li><span class="badge badge-todo">TODO</span> Автоматический мигратор (sql-файл применяется вручную)</li>
+        <li>At-least-once семантика — возможны дублирующиеся запуски ffmpeg</li>
+        <li>Логи хранятся в PostgreSQL — не оптимально для очень больших объёмов</li>
+        <li>Фильтрация job по GPU/CPU пока не используется при выдаче</li>
+      </ul>
+    </section>
+
+    <footer>
+      Документация проекта go_distributed_system · обновляйте <code>web/docs/index.html</code> при изменении API, схемы БД или архитектуры.
+    </footer>
+  </main>
+
+  <script>
+    const links = document.querySelectorAll('nav a');
+    const sections = [...links].map(a => document.querySelector(a.getAttribute('href')));
+
+    const observer = new IntersectionObserver(entries => {
+      entries.forEach(entry => {
+        if (entry.isIntersecting) {
+          links.forEach(a => a.classList.toggle('active', a.getAttribute('href') === '#' + entry.target.id));
+        }
+      });
+    }, { rootMargin: '-20% 0px -70% 0px' });
+
+    sections.forEach(s => s && observer.observe(s));
+  </script>
+</body>
+</html>

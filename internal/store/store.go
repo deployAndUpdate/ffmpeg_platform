@@ -68,43 +68,7 @@ SELECT id, input_path, output_path, ffmpeg_args, status, assigned_worker_id,
        attempt, max_attempts, lease_expires_at, created_at, started_at, finished_at, updated_at
 FROM jobs
 WHERE id = $1`
-	row := s.db.QueryRowContext(ctx, q, id)
-	var j types.Job
-	var assigned sql.NullString
-	var lease sql.NullTime
-	var started sql.NullTime
-	var finished sql.NullTime
-
-	if err := row.Scan(
-		&j.ID,
-		&j.InputPath,
-		&j.OutputPath,
-		&j.FFmpegArgs,
-		&j.Status,
-		&assigned,
-		&j.Attempt,
-		&j.MaxAttempts,
-		&lease,
-		&j.CreatedAt,
-		&started,
-		&finished,
-		&j.UpdatedAt,
-	); err != nil {
-		return nil, err
-	}
-	if assigned.Valid {
-		j.AssignedWorkerID = &assigned.String
-	}
-	if lease.Valid {
-		j.LeaseExpiresAt = &lease.Time
-	}
-	if started.Valid {
-		j.StartedAt = &started.Time
-	}
-	if finished.Valid {
-		j.FinishedAt = &finished.Time
-	}
-	return &j, nil
+	return scanJob(s.db.QueryRowContext(ctx, q, id))
 }
 
 // RegisterWorker inserts or updates worker info, marking it ACTIVE and refreshing heartbeat.

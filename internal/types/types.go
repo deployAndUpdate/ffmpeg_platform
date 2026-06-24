@@ -54,3 +54,8 @@ type Worker struct {
 	UpdatedAt       time.Time    `json:"updated_at"`
 }
 
+// JobLogEntry is a single stdout/stderr line from a job run.
+type JobLogEntry struct {
+	Stream string `json:"stream"`
+	Line   string `json:"line"`
+}
