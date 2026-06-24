@@ -21,10 +21,12 @@ import (
 
 // Server bundles HTTP handlers for the scheduler.
 type Server struct {
-	store         JobStore
-	storage       storage.ObjectStorage
-	storageConfig storage.Config
-	mux           *http.ServeMux
+	store           JobStore
+	storage         storage.ObjectStorage
+	storageConfig   storage.Config
+	maxUploadBytes  int64
+	uploadTimeout   time.Duration
+	mux             *http.ServeMux
 }
 
 // NewServer wires routes and dependencies (local-path jobs only).
@@ -35,10 +37,12 @@ func NewServer(st JobStore) *Server {
 // NewServerWithStorage enables R2 object-storage job flow when storage is non-nil.
 func NewServerWithStorage(st JobStore, obj storage.ObjectStorage, cfg storage.Config) *Server {
 	s := &Server{
-		store:         st,
-		storage:       obj,
-		storageConfig: cfg,
-		mux:           http.NewServeMux(),
+		store:          st,
+		storage:        obj,
+		storageConfig:  cfg,
+		maxUploadBytes: MaxUploadBytesFromEnv(),
+		uploadTimeout:  UploadTimeoutFromEnv(),
+		mux:            http.NewServeMux(),
 	}
 	s.registerRoutes()
 	return s
@@ -80,10 +84,15 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
-// handleJobs covers POST /jobs.
+// handleJobs covers POST /jobs (JSON local paths or multipart upload to R2).
 func (s *Server) handleJobs(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodPost:
+		ct := r.Header.Get("Content-Type")
+		if strings.HasPrefix(ct, "multipart/form-data") {
+			s.createJobFromUpload(w, r)
+			return
+		}
 		s.createJob(w, r)
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -160,6 +169,10 @@ func writeJSON(w http.ResponseWriter, status int, payload any) {
 }
 
 func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
+	if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
+		http.Error(w, "use multipart POST /jobs only when R2 is configured", http.StatusUnsupportedMediaType)
+		return
+	}
 	type req struct {
 		InputPath   string `json:"input_path"`
 		OutputPath  string `json:"output_path"`

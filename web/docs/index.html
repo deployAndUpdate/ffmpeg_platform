@@ -482,7 +482,7 @@
 
     <section id="api">
       <h2 data-i18n="api.title">HTTP API</h2>
-      <p data-i18n="api.intro">Базовый URL: <code>http://&lt;scheduler-host&gt;:8080</code>. Все тела запросов — JSON.</p>
+      <p data-i18n="api.intro">Базовый URL: <code>http://&lt;scheduler-host&gt;:8080</code>. JSON для локальных job; <code>multipart/form-data</code> для upload в R2 через <code>POST /jobs</code>.</p>
 
       <h3 data-i18n="api.health">Health</h3>
       <table>
@@ -505,7 +505,7 @@
         </tr>
         <tr>
           <td><span class="method method-post">POST</span> <code>/jobs</code></td>
-          <td data-i18n="api.jobs.create">Создать локальный job (пути на диске воркера)</td>
+          <td data-i18n="api.jobs.create">Создать job: JSON (локальные пути) или multipart upload (R2)</td>
         </tr>
         <tr>
           <td><span class="method method-get">GET</span> <code>/jobs/{id}</code></td>
@@ -524,7 +524,27 @@
   "ffmpeg_args": "-c:v libx264 -crf 23",
   "max_attempts": 3
 }</code></pre>
-      <p data-i18n="api.jobs.postNote">Обязательные поля: <code>input_path</code>, <code>output_path</code>, <code>ffmpeg_args</code>. Ответ: <code>201 Created</code> с объектом job (<code>storage: "local"</code>).</p>
+      <p data-i18n="api.jobs.postNote">JSON: обязательные поля <code>input_path</code>, <code>output_path</code>, <code>ffmpeg_args</code> (<code>storage: "local"</code>). Multipart (R2): поля <code>file</code>, <code>ffmpeg_args</code>, <code>output_ext</code> — scheduler загружает файл в bucket и сразу ставит job в <code>QUEUED</code>.</p>
+
+      <h4 data-i18n="api.upload.title">POST /jobs — multipart upload (R2)</h4>
+      <p data-i18n="api.upload.intro">Один запрос «отправил файл и забыл». Требует настроенный R2 на scheduler. Content-Type: <code>multipart/form-data</code>.</p>
+      <table>
+        <thead><tr><th data-i18n="api.upload.col.field">Поле</th><th data-i18n="api.upload.col.desc">Описание</th></tr></thead>
+        <tbody>
+          <tr><td><code>file</code></td><td data-i18n="api.upload.file">Входной файл (видео/аудио)</td></tr>
+          <tr><td><code>ffmpeg_args</code></td><td data-i18n="api.upload.ffmpeg">Аргументы ffmpeg</td></tr>
+          <tr><td><code>output_ext</code></td><td data-i18n="api.upload.ext">Расширение результата, напр. <code>mp3</code></td></tr>
+          <tr><td><code>max_attempts</code></td><td data-i18n="api.upload.attempts">Опционально, по умолчанию 3</td></tr>
+        </tbody>
+      </table>
+      <pre><code>curl -s -X POST http://localhost:8080/jobs \
+  -F "file=@/path/to/video.mp4" \
+  -F 'ffmpeg_args=-vn -acodec libmp3lame -b:a 192k' \
+  -F 'output_ext=mp3' | jq
+
+# дождаться COMPLETED, затем download_url:
+curl -s http://localhost:8080/jobs/JOB_ID | jq '{status, download_url}'</code></pre>
+      <p data-i18n="api.upload.limit">Лимит размера: env <code>MAX_UPLOAD_BYTES</code> (по умолчанию 512 MiB). Таймаут upload: <code>SCHEDULER_UPLOAD_TIMEOUT</code> (по умолчанию 30m).</p>
 
       <h3 data-i18n="api.r2.title">Cloudflare R2 (object storage)</h3>
       <p data-i18n="api.r2.intro">Если заданы переменные <code>R2_*</code>, scheduler и worker используют R2. Клиент загружает файл напрямую в bucket по presigned URL; воркер скачивает объект, обрабатывает ffmpeg и загружает результат обратно.</p>
@@ -618,6 +638,8 @@ curl -s "http://localhost:8080/jobs/$JOB_ID" | jq '.download_url'</code></pre>
         <tbody>
           <tr><td><code>DB_DSN</code></td><td data-i18n="env.yes">да</td><td>—</td><td data-i18n="env.scheduler.db">PostgreSQL connection string</td></tr>
           <tr><td><code>SCHEDULER_ADDR</code></td><td data-i18n="env.no">нет</td><td><code>:8080</code></td><td data-i18n="env.scheduler.addr">Адрес HTTP-сервера</td></tr>
+          <tr><td><code>MAX_UPLOAD_BYTES</code></td><td data-i18n="env.no">нет</td><td><code>536870912</code></td><td data-i18n="env.scheduler.maxUpload">Макс. размер multipart upload (байты)</td></tr>
+          <tr><td><code>SCHEDULER_UPLOAD_TIMEOUT</code></td><td data-i18n="env.no">нет</td><td><code>30m</code></td><td data-i18n="env.scheduler.uploadTimeout">Таймаут приёма файла через API</td></tr>
           <tr><td><code>R2_ACCESS_KEY_ID</code></td><td data-i18n="env.no">нет*</td><td>—</td><td data-i18n="env.r2.key">R2 API token access key</td></tr>
           <tr><td><code>R2_SECRET_ACCESS_KEY</code></td><td data-i18n="env.no">нет*</td><td>—</td><td data-i18n="env.r2.secret">R2 API token secret</td></tr>
           <tr><td><code>R2_BUCKET</code></td><td data-i18n="env.no">нет*</td><td>—</td><td data-i18n="env.r2.bucket">Имя bucket</td></tr>
@@ -941,16 +963,25 @@ make ci</code></pre>
         'database.jobs.lease': 'Срок lease при RUNNING',
         'database.logsDesc': 'Строки stdout/stderr с таймштампом. Записываются при финализации job в транзакции с обновлением статуса.',
         'api.title': 'HTTP API',
-        'api.intro': 'Базовый URL: <code>http://&lt;scheduler-host&gt;:8080</code>. Все тела запросов — JSON.',
+        'api.intro': 'Базовый URL: <code>http://&lt;scheduler-host&gt;:8080</code>. JSON для локальных job; <code>multipart/form-data</code> для upload в R2 через <code>POST /jobs</code>.',
         'api.health': 'Health',
         'api.healthDesc': 'Проверка доступности scheduler',
         'api.jobs.init': 'Создать R2 job и получить presigned URL для upload',
         'api.jobs.submit': 'Подтвердить upload и поставить job в очередь',
-        'api.jobs.create': 'Создать локальный job (пути на диске воркера)',
+        'api.jobs.create': 'Создать job: JSON (локальные пути) или multipart upload (R2)',
         'api.jobs.get': 'Получить job по ID',
         'api.jobs.logs': 'Логи stdout/stderr job (по попыткам, в порядке времени)',
-        'api.jobs.postBody': '<strong>POST /jobs</strong> — тело запроса:',
-        'api.jobs.postNote': 'Обязательные поля: <code>input_path</code>, <code>output_path</code>, <code>ffmpeg_args</code>. Ответ: <code>201 Created</code> с объектом job (<code>storage: "local"</code>).',
+        'api.jobs.postBody': '<strong>POST /jobs</strong> — тело запроса (JSON, локальный режим):',
+        'api.jobs.postNote': 'JSON: обязательные поля <code>input_path</code>, <code>output_path</code>, <code>ffmpeg_args</code> (<code>storage: "local"</code>). Multipart (R2): поля <code>file</code>, <code>ffmpeg_args</code>, <code>output_ext</code> — scheduler загружает файл в bucket и сразу ставит job в <code>QUEUED</code>.',
+        'api.upload.title': 'POST /jobs — multipart upload (R2)',
+        'api.upload.intro': 'Один запрос «отправил файл и забыл». Требует настроенный R2 на scheduler. Content-Type: <code>multipart/form-data</code>.',
+        'api.upload.col.field': 'Поле',
+        'api.upload.col.desc': 'Описание',
+        'api.upload.file': 'Входной файл (видео/аудио)',
+        'api.upload.ffmpeg': 'Аргументы ffmpeg',
+        'api.upload.ext': 'Расширение результата, напр. <code>mp3</code>',
+        'api.upload.attempts': 'Опционально, по умолчанию 3',
+        'api.upload.limit': 'Лимит размера: env <code>MAX_UPLOAD_BYTES</code> (по умолчанию 512 MiB). Таймаут upload: <code>SCHEDULER_UPLOAD_TIMEOUT</code> (по умолчанию 30m).',
         'api.r2.title': 'Cloudflare R2 (object storage)',
         'api.r2.intro': 'Если заданы переменные <code>R2_*</code>, scheduler и worker используют R2. Клиент загружает файл напрямую в bucket по presigned URL; воркер скачивает объект, обрабатывает ffmpeg и загружает результат обратно.',
         'api.r2.initBody': '<strong>POST /jobs/init</strong> — тело запроса:',
@@ -977,6 +1008,8 @@ make ci</code></pre>
         'env.no': 'нет',
         'env.scheduler.db': 'PostgreSQL connection string',
         'env.scheduler.addr': 'Адрес HTTP-сервера',
+        'env.scheduler.maxUpload': 'Макс. размер multipart upload (байты)',
+        'env.scheduler.uploadTimeout': 'Таймаут приёма файла через API',
         'env.worker.url': 'URL scheduler, напр. <code>http://localhost:8080</code>',
         'env.worker.id': 'ID воркера',
         'env.worker.hostname': 'Имя хоста',
@@ -1126,16 +1159,25 @@ make ci</code></pre>
         'database.jobs.lease': 'Lease expiry when RUNNING',
         'database.logsDesc': 'stdout/stderr lines with timestamps. Written on job finalization in a transaction with status update.',
         'api.title': 'HTTP API',
-        'api.intro': 'Base URL: <code>http://&lt;scheduler-host&gt;:8080</code>. All request bodies are JSON.',
+        'api.intro': 'Base URL: <code>http://&lt;scheduler-host&gt;:8080</code>. JSON for local jobs; <code>multipart/form-data</code> for R2 upload via <code>POST /jobs</code>.',
         'api.health': 'Health',
         'api.healthDesc': 'Scheduler availability check',
         'api.jobs.init': 'Create R2 job and get presigned upload URL',
         'api.jobs.submit': 'Confirm upload and queue the job',
-        'api.jobs.create': 'Create local job (paths on worker disk)',
+        'api.jobs.create': 'Create job: JSON (local paths) or multipart upload (R2)',
         'api.jobs.get': 'Get job by ID',
         'api.jobs.logs': 'Job stdout/stderr logs (by attempt, chronological)',
-        'api.jobs.postBody': '<strong>POST /jobs</strong> — request body:',
-        'api.jobs.postNote': 'Required fields: <code>input_path</code>, <code>output_path</code>, <code>ffmpeg_args</code>. Response: <code>201 Created</code> with job object (<code>storage: "local"</code>).',
+        'api.jobs.postBody': '<strong>POST /jobs</strong> — request body (JSON, local mode):',
+        'api.jobs.postNote': 'JSON: required <code>input_path</code>, <code>output_path</code>, <code>ffmpeg_args</code> (<code>storage: "local"</code>). Multipart (R2): fields <code>file</code>, <code>ffmpeg_args</code>, <code>output_ext</code> — scheduler uploads to bucket and queues job immediately.',
+        'api.upload.title': 'POST /jobs — multipart upload (R2)',
+        'api.upload.intro': 'Single-request upload when R2 is configured. Content-Type: <code>multipart/form-data</code>.',
+        'api.upload.col.field': 'Field',
+        'api.upload.col.desc': 'Description',
+        'api.upload.file': 'Input file (video/audio)',
+        'api.upload.ffmpeg': 'ffmpeg arguments',
+        'api.upload.ext': 'Output extension, e.g. <code>mp3</code>',
+        'api.upload.attempts': 'Optional, default 3',
+        'api.upload.limit': 'Size limit: env <code>MAX_UPLOAD_BYTES</code> (default 512 MiB). Upload timeout: <code>SCHEDULER_UPLOAD_TIMEOUT</code> (default 30m).',
         'api.r2.title': 'Cloudflare R2 (object storage)',
         'api.r2.intro': 'When <code>R2_*</code> env vars are set, scheduler and worker use R2. The client uploads directly to the bucket via presigned URL; the worker downloads, runs ffmpeg, and uploads the result.',
         'api.r2.initBody': '<strong>POST /jobs/init</strong> — request body:',
@@ -1162,6 +1204,8 @@ make ci</code></pre>
         'env.no': 'no',
         'env.scheduler.db': 'PostgreSQL connection string',
         'env.scheduler.addr': 'HTTP server address',
+        'env.scheduler.maxUpload': 'Max multipart upload size (bytes)',
+        'env.scheduler.uploadTimeout': 'API file upload timeout',
         'env.worker.url': 'Scheduler URL, e.g. <code>http://localhost:8080</code>',
         'env.worker.id': 'Worker ID',
         'env.worker.hostname': 'Hostname',
@@ -1311,16 +1355,25 @@ make ci</code></pre>
         'database.jobs.lease': 'Термін lease при RUNNING',
         'database.logsDesc': 'Рядки stdout/stderr з міткою часу. Записуються при фіналізації job у транзакції з оновленням статусу.',
         'api.title': 'HTTP API',
-        'api.intro': 'Базовий URL: <code>http://&lt;scheduler-host&gt;:8080</code>. Усі тіла запитів — JSON.',
+        'api.intro': 'Базовий URL: <code>http://&lt;scheduler-host&gt;:8080</code>. JSON для локальних job; <code>multipart/form-data</code> для upload у R2 через <code>POST /jobs</code>.',
         'api.health': 'Health',
         'api.healthDesc': 'Перевірка доступності scheduler',
         'api.jobs.init': 'Створити R2 job і отримати presigned URL для upload',
         'api.jobs.submit': 'Підтвердити upload і поставити job у чергу',
-        'api.jobs.create': 'Створити локальний job (шляхи на диску воркера)',
+        'api.jobs.create': 'Створити job: JSON (локальні шляхи) або multipart upload (R2)',
         'api.jobs.get': 'Отримати job за ID',
         'api.jobs.logs': 'Логи stdout/stderr job (за спробами, у хронологічному порядку)',
-        'api.jobs.postBody': '<strong>POST /jobs</strong> — тіло запиту:',
-        'api.jobs.postNote': 'Обов\'язкові поля: <code>input_path</code>, <code>output_path</code>, <code>ffmpeg_args</code>. Відповідь: <code>201 Created</code> з об\'єктом job (<code>storage: "local"</code>).',
+        'api.jobs.postBody': '<strong>POST /jobs</strong> — тіло запиту (JSON, локальний режим):',
+        'api.jobs.postNote': 'JSON: обов\'язкові <code>input_path</code>, <code>output_path</code>, <code>ffmpeg_args</code> (<code>storage: "local"</code>). Multipart (R2): поля <code>file</code>, <code>ffmpeg_args</code>, <code>output_ext</code> — scheduler завантажує файл у bucket і одразу ставить job у <code>QUEUED</code>.',
+        'api.upload.title': 'POST /jobs — multipart upload (R2)',
+        'api.upload.intro': 'Один запит «надіслав файл і забув». Потрібен R2 на scheduler. Content-Type: <code>multipart/form-data</code>.',
+        'api.upload.col.field': 'Поле',
+        'api.upload.col.desc': 'Опис',
+        'api.upload.file': 'Вхідний файл (відео/аудіо)',
+        'api.upload.ffmpeg': 'Аргументи ffmpeg',
+        'api.upload.ext': 'Розширення результату, напр. <code>mp3</code>',
+        'api.upload.attempts': 'Опціонально, за замовчуванням 3',
+        'api.upload.limit': 'Ліміт розміру: env <code>MAX_UPLOAD_BYTES</code> (за замовчуванням 512 MiB). Таймаут upload: <code>SCHEDULER_UPLOAD_TIMEOUT</code> (за замовчуванням 30m).',
         'api.r2.title': 'Cloudflare R2 (object storage)',
         'api.r2.intro': 'Якщо задані змінні <code>R2_*</code>, scheduler і worker використовують R2. Клієнт завантажує файл напряму в bucket за presigned URL; воркер завантажує об\'єкт, обробляє ffmpeg і вивантажує результат.',
         'api.r2.initBody': '<strong>POST /jobs/init</strong> — тіло запиту:',
@@ -1347,6 +1400,8 @@ make ci</code></pre>
         'env.no': 'ні',
         'env.scheduler.db': 'PostgreSQL connection string',
         'env.scheduler.addr': 'Адреса HTTP-сервера',
+        'env.scheduler.maxUpload': 'Макс. розмір multipart upload (байти)',
+        'env.scheduler.uploadTimeout': 'Таймаут прийому файлу через API',
         'env.worker.url': 'URL scheduler, напр. <code>http://localhost:8080</code>',
         'env.worker.id': 'ID воркера',
         'env.worker.hostname': "Ім'я хоста",
