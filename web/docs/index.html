@@ -260,6 +260,36 @@
       color: var(--text-muted);
     }
 
+    .lang-switch {
+      display: flex;
+      gap: 0.35rem;
+      padding: 0.75rem 1.25rem 0;
+    }
+
+    .lang-switch button {
+      flex: 1;
+      padding: 0.35rem 0.5rem;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--code-bg);
+      color: var(--text-muted);
+      font-size: 0.72rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: color 0.15s, background 0.15s, border-color 0.15s;
+    }
+
+    .lang-switch button:hover {
+      color: var(--text);
+      border-color: var(--accent);
+    }
+
+    .lang-switch button.active {
+      color: var(--accent);
+      background: var(--accent-soft);
+      border-color: var(--accent);
+    }
+
     @media (max-width: 768px) {
       nav { display: none; }
       main { margin-left: 0; padding: 1.5rem; }
@@ -270,28 +300,33 @@
   <nav>
     <div class="logo">
       <h1>go_distributed_system</h1>
-      <p>Распределённое сжатие видео</p>
+      <p data-i18n="logo.subtitle">Распределённое сжатие видео</p>
+      <div class="lang-switch" role="group" aria-label="Language">
+        <button type="button" data-lang="en">EN</button>
+        <button type="button" data-lang="ua">UA</button>
+        <button type="button" data-lang="ru">RU</button>
+      </div>
     </div>
     <ul>
-      <li><a href="#overview">Обзор</a></li>
-      <li><a href="#architecture">Архитектура</a></li>
-      <li><a href="#components">Компоненты</a></li>
-      <li><a href="#job-lifecycle">Жизненный цикл Job</a></li>
-      <li><a href="#database">База данных</a></li>
-      <li><a href="#api">HTTP API</a></li>
-      <li><a href="#env">Переменные окружения</a></li>
-      <li><a href="#quickstart">Быстрый старт</a></li>
-      <li><a href="#docker">Docker</a></li>
-      <li><a href="#structure">Структура проекта</a></li>
-      <li><a href="#testing">Тесты и CI</a></li>
-      <li><a href="#limitations">Ограничения и TODO</a></li>
+      <li><a href="#overview" data-i18n="nav.overview">Обзор</a></li>
+      <li><a href="#architecture" data-i18n="nav.architecture">Архитектура</a></li>
+      <li><a href="#components" data-i18n="nav.components">Компоненты</a></li>
+      <li><a href="#job-lifecycle" data-i18n="nav.jobLifecycle">Жизненный цикл Job</a></li>
+      <li><a href="#database" data-i18n="nav.database">База данных</a></li>
+      <li><a href="#api" data-i18n="nav.api">HTTP API</a></li>
+      <li><a href="#env" data-i18n="nav.env">Переменные окружения</a></li>
+      <li><a href="#quickstart" data-i18n="nav.quickstart">Быстрый старт</a></li>
+      <li><a href="#docker" data-i18n="nav.docker">Docker</a></li>
+      <li><a href="#structure" data-i18n="nav.structure">Структура проекта</a></li>
+      <li><a href="#testing" data-i18n="nav.testing">Тесты и CI</a></li>
+      <li><a href="#limitations" data-i18n="nav.limitations">Ограничения и TODO</a></li>
     </ul>
   </nav>
 
   <main>
     <div class="hero">
-      <h2>Distributed Video Compression Platform</h2>
-      <p>
+      <h2 data-i18n="hero.title">Distributed Video Compression Platform</h2>
+      <p data-i18n="hero.desc">
         Отказоустойчивая платформа для запуска <code>ffmpeg</code> на нескольких узлах.
         Планировщик (Scheduler) принимает задания через HTTP API, воркеры забирают их из очереди PostgreSQL
         и выполняют транскодирование.
@@ -304,8 +339,8 @@
     </div>
 
     <section id="overview">
-      <h2>Обзор</h2>
-      <p>
+      <h2 data-i18n="overview.title">Обзор</h2>
+      <p data-i18n="overview.p1">
         Проект реализует минимально жизнеспособную распределённую систему обработки видео.
         Очередь заданий хранится в PostgreSQL и выдаётся через <code>SELECT … FOR UPDATE SKIP LOCKED</code> —
         без внешнего брокера сообщений.
@@ -313,21 +348,21 @@
       <div class="card-grid">
         <div class="card">
           <h4>Scheduler</h4>
-          <p>HTTP API: создание job, регистрация воркеров, выдача задач, финализация результатов.</p>
+          <p data-i18n="overview.card.scheduler">HTTP API: создание job, регистрация воркеров, выдача задач, финализация результатов.</p>
         </div>
         <div class="card">
           <h4>Worker</h4>
-          <p>Регистрация, heartbeat, polling заданий, запуск ffmpeg, отправка логов.</p>
+          <p data-i18n="overview.card.worker">Регистрация, heartbeat, polling заданий, запуск ffmpeg, отправка логов.</p>
         </div>
         <div class="card">
           <h4>PostgreSQL</h4>
-          <p>Единственный источник истины: jobs, workers, job_logs, lease TTL.</p>
+          <p data-i18n="overview.card.postgres">Единственный источник истины: jobs, workers, job_logs, lease TTL.</p>
         </div>
       </div>
     </section>
 
     <section id="architecture">
-      <h2>Архитектура</h2>
+      <h2 data-i18n="architecture.title">Архитектура</h2>
       <div class="diagram">┌─────────────┐     HTTP API      ┌──────────────────┐
 │   Client    │ ───────────────► │    Scheduler     │
 │  (curl/API) │                  │  cmd/scheduler   │
@@ -346,55 +381,55 @@
              │  Worker 1 │         │  Worker 2 │         │  Worker N │
              │  ffmpeg   │         │  ffmpeg   │         │  ffmpeg   │
              └───────────┘         └───────────┘         └───────────┘</div>
-      <h3>Ключевые принципы</h3>
+      <h3 data-i18n="architecture.principles">Ключевые принципы</h3>
       <ul>
-        <li><strong>At-least-once</strong> — возможны повторные выполнения при сбоях воркера или истечении lease.</li>
-        <li><strong>Lease</strong> — при выдаче job воркеру устанавливается <code>lease_expires_at</code> (по умолчанию 30 мин).</li>
-        <li><strong>SKIP LOCKED</strong> — несколько воркеров могут безопасно конкурировать за задания без блокировок.</li>
+        <li data-i18n="architecture.atLeastOnce"><strong>At-least-once</strong> — возможны повторные выполнения при сбоях воркера или истечении lease.</li>
+        <li data-i18n="architecture.lease"><strong>Lease</strong> — при выдаче job воркеру устанавливается <code>lease_expires_at</code> (по умолчанию 30 мин).</li>
+        <li data-i18n="architecture.skipLocked"><strong>SKIP LOCKED</strong> — несколько воркеров могут безопасно конкурировать за задания без блокировок.</li>
       </ul>
     </section>
 
     <section id="components">
-      <h2>Компоненты</h2>
+      <h2 data-i18n="components.title">Компоненты</h2>
 
       <h3><code>cmd/scheduler</code></h3>
-      <p>Точка входа HTTP-сервера. Подключается к PostgreSQL через <code>DB_DSN</code>, слушает <code>SCHEDULER_ADDR</code> (по умолчанию <code>:8080</code>).</p>
+      <p data-i18n="components.scheduler">Точка входа HTTP-сервера. Подключается к PostgreSQL через <code>DB_DSN</code>, слушает <code>SCHEDULER_ADDR</code> (по умолчанию <code>:8080</code>).</p>
 
       <h3><code>cmd/worker</code></h3>
-      <p>Точка входа воркера. Регистрируется в scheduler, шлёт heartbeat, параллельно обрабатывает до <code>max_parallel_jobs</code> заданий.</p>
+      <p data-i18n="components.worker">Точка входа воркера. Регистрируется в scheduler, шлёт heartbeat, параллельно обрабатывает до <code>max_parallel_jobs</code> заданий.</p>
 
       <h3><code>internal/api</code></h3>
-      <p>HTTP-хендлеры: создание и получение job, регистрация воркеров, heartbeat, выдача job (<code>AcquireJob</code>), финализация (<code>FinishJob</code>).</p>
+      <p data-i18n="components.api">HTTP-хендлеры: создание и получение job, регистрация воркеров, heartbeat, выдача job (<code>AcquireJob</code>), финализация (<code>FinishJob</code>).</p>
 
       <h3><code>internal/store</code></h3>
-      <p>Слой доступа к PostgreSQL: CRUD для jobs и workers, атомарная выдача заданий, запись логов в транзакции.</p>
+      <p data-i18n="components.store">Слой доступа к PostgreSQL: CRUD для jobs и workers, атомарная выдача заданий, запись логов в транзакции.</p>
 
       <h3><code>internal/worker</code></h3>
-      <p>Клиент scheduler API и основной цикл воркера: polling, запуск ffmpeg, отправка результата.</p>
+      <p data-i18n="components.workerPkg">Клиент scheduler API и основной цикл воркера: polling, запуск ffmpeg, отправка результата.</p>
 
       <h3><code>internal/ffmpeg</code></h3>
-      <p>Обёртка над <code>exec ffmpeg</code>: сбор stdout/stderr построчно, проверка входного файла, создание директории для выхода.</p>
+      <p data-i18n="components.ffmpeg">Обёртка над <code>exec ffmpeg</code>: сбор stdout/stderr построчно, проверка входного файла, создание директории для выхода.</p>
     </section>
 
     <section id="job-lifecycle">
-      <h2>Жизненный цикл Job</h2>
+      <h2 data-i18n="jobLifecycle.title">Жизненный цикл Job</h2>
       <div class="diagram">QUEUED ──► RUNNING ──► COMPLETED
    ▲            │
    │            ▼
  RETRY ◄──── FAILED (attempt ≥ max_attempts)</div>
       <table>
         <thead>
-          <tr><th>Статус</th><th>Описание</th></tr>
+          <tr><th data-i18n="jobLifecycle.col.status">Статус</th><th data-i18n="jobLifecycle.col.desc">Описание</th></tr>
         </thead>
         <tbody>
-          <tr><td><code>QUEUED</code></td><td>Задание создано и ждёт воркера</td></tr>
-          <tr><td><code>RUNNING</code></td><td>Назначено воркеру, установлен lease</td></tr>
-          <tr><td><code>COMPLETED</code></td><td>Успешно завершено (финальный статус)</td></tr>
-          <tr><td><code>FAILED</code></td><td>Исчерпаны попытки (<code>attempt ≥ max_attempts</code>)</td></tr>
-          <tr><td><code>RETRY</code></td><td>Ошибка выполнения, будет повторно поставлено в очередь</td></tr>
+          <tr><td><code>QUEUED</code></td><td data-i18n="jobLifecycle.queued">Задание создано и ждёт воркера</td></tr>
+          <tr><td><code>RUNNING</code></td><td data-i18n="jobLifecycle.running">Назначено воркеру, установлен lease</td></tr>
+          <tr><td><code>COMPLETED</code></td><td data-i18n="jobLifecycle.completed">Успешно завершено (финальный статус)</td></tr>
+          <tr><td><code>FAILED</code></td><td data-i18n="jobLifecycle.failed">Исчерпаны попытки (<code>attempt ≥ max_attempts</code>)</td></tr>
+          <tr><td><code>RETRY</code></td><td data-i18n="jobLifecycle.retry">Ошибка выполнения, будет повторно поставлено в очередь</td></tr>
         </tbody>
       </table>
-      <p>
+      <p data-i18n="jobLifecycle.note">
         При создании job через API статус сразу <code>QUEUED</code>.
         При выдаче воркеру <code>attempt</code> увеличивается на 1.
         Статус <code>NEW</code> зарезервирован в схеме БД, но пока не используется в коде.
@@ -402,52 +437,52 @@
     </section>
 
     <section id="database">
-      <h2>База данных</h2>
-      <p>Миграция: <code>db/migrations/001_init.sql</code></p>
+      <h2 data-i18n="database.title">База данных</h2>
+      <p data-i18n="database.migration">Миграция: <code>db/migrations/001_init.sql</code></p>
 
-      <h3>Таблица <code>workers</code></h3>
+      <h3 data-i18n="database.workersTable">Таблица <code>workers</code></h3>
       <table>
-        <thead><tr><th>Поле</th><th>Тип</th><th>Описание</th></tr></thead>
+        <thead><tr><th data-i18n="database.col.field">Поле</th><th data-i18n="database.col.type">Тип</th><th data-i18n="database.col.desc">Описание</th></tr></thead>
         <tbody>
-          <tr><td><code>id</code></td><td>UUID</td><td>Идентификатор воркера</td></tr>
-          <tr><td><code>hostname</code></td><td>TEXT</td><td>Имя хоста</td></tr>
-          <tr><td><code>cpu_cores</code></td><td>INTEGER</td><td>Количество CPU</td></tr>
-          <tr><td><code>gpu_available</code></td><td>BOOLEAN</td><td>Наличие GPU</td></tr>
-          <tr><td><code>max_parallel_jobs</code></td><td>INTEGER</td><td>Лимит параллельных job</td></tr>
-          <tr><td><code>last_heartbeat_at</code></td><td>TIMESTAMPTZ</td><td>Последний heartbeat</td></tr>
-          <tr><td><code>status</code></td><td>TEXT</td><td><code>ACTIVE</code> | <code>DEAD</code></td></tr>
+          <tr><td><code>id</code></td><td>UUID</td><td data-i18n="database.workers.id">Идентификатор воркера</td></tr>
+          <tr><td><code>hostname</code></td><td>TEXT</td><td data-i18n="database.workers.hostname">Имя хоста</td></tr>
+          <tr><td><code>cpu_cores</code></td><td>INTEGER</td><td data-i18n="database.workers.cpu">Количество CPU</td></tr>
+          <tr><td><code>gpu_available</code></td><td>BOOLEAN</td><td data-i18n="database.workers.gpu">Наличие GPU</td></tr>
+          <tr><td><code>max_parallel_jobs</code></td><td>INTEGER</td><td data-i18n="database.workers.maxJobs">Лимит параллельных job</td></tr>
+          <tr><td><code>last_heartbeat_at</code></td><td>TIMESTAMPTZ</td><td data-i18n="database.workers.heartbeat">Последний heartbeat</td></tr>
+          <tr><td><code>status</code></td><td>TEXT</td><td data-i18n="database.workers.status"><code>ACTIVE</code> | <code>DEAD</code></td></tr>
         </tbody>
       </table>
 
-      <h3>Таблица <code>jobs</code></h3>
+      <h3 data-i18n="database.jobsTable">Таблица <code>jobs</code></h3>
       <table>
-        <thead><tr><th>Поле</th><th>Тип</th><th>Описание</th></tr></thead>
+        <thead><tr><th data-i18n="database.col.field">Поле</th><th data-i18n="database.col.type">Тип</th><th data-i18n="database.col.desc">Описание</th></tr></thead>
         <tbody>
-          <tr><td><code>id</code></td><td>UUID</td><td>Идентификатор job</td></tr>
-          <tr><td><code>input_path</code></td><td>TEXT</td><td>Путь к входному файлу (на воркере)</td></tr>
-          <tr><td><code>output_path</code></td><td>TEXT</td><td>Путь к выходному файлу</td></tr>
-          <tr><td><code>ffmpeg_args</code></td><td>TEXT</td><td>Аргументы ffmpeg (без -i и output)</td></tr>
-          <tr><td><code>status</code></td><td>TEXT</td><td>Статус жизненного цикла</td></tr>
-          <tr><td><code>assigned_worker_id</code></td><td>UUID</td><td>Текущий воркер</td></tr>
-          <tr><td><code>attempt</code></td><td>INTEGER</td><td>Номер попытки</td></tr>
-          <tr><td><code>max_attempts</code></td><td>INTEGER</td><td>Максимум попыток (по умолчанию 3)</td></tr>
-          <tr><td><code>lease_expires_at</code></td><td>TIMESTAMPTZ</td><td>Срок lease при RUNNING</td></tr>
+          <tr><td><code>id</code></td><td>UUID</td><td data-i18n="database.jobs.id">Идентификатор job</td></tr>
+          <tr><td><code>input_path</code></td><td>TEXT</td><td data-i18n="database.jobs.input">Путь к входному файлу (на воркере)</td></tr>
+          <tr><td><code>output_path</code></td><td>TEXT</td><td data-i18n="database.jobs.output">Путь к выходному файлу</td></tr>
+          <tr><td><code>ffmpeg_args</code></td><td>TEXT</td><td data-i18n="database.jobs.ffmpeg">Аргументы ffmpeg (без -i и output)</td></tr>
+          <tr><td><code>status</code></td><td>TEXT</td><td data-i18n="database.jobs.status">Статус жизненного цикла</td></tr>
+          <tr><td><code>assigned_worker_id</code></td><td>UUID</td><td data-i18n="database.jobs.worker">Текущий воркер</td></tr>
+          <tr><td><code>attempt</code></td><td>INTEGER</td><td data-i18n="database.jobs.attempt">Номер попытки</td></tr>
+          <tr><td><code>max_attempts</code></td><td>INTEGER</td><td data-i18n="database.jobs.maxAttempts">Максимум попыток (по умолчанию 3)</td></tr>
+          <tr><td><code>lease_expires_at</code></td><td>TIMESTAMPTZ</td><td data-i18n="database.jobs.lease">Срок lease при RUNNING</td></tr>
         </tbody>
       </table>
 
-      <h3>Таблица <code>job_logs</code></h3>
-      <p>Строки stdout/stderr с таймштампом. Записываются при финализации job в транзакции с обновлением статуса.</p>
+      <h3 data-i18n="database.logsTable">Таблица <code>job_logs</code></h3>
+      <p data-i18n="database.logsDesc">Строки stdout/stderr с таймштампом. Записываются при финализации job в транзакции с обновлением статуса.</p>
     </section>
 
     <section id="api">
-      <h2>HTTP API</h2>
-      <p>Базовый URL: <code>http://&lt;scheduler-host&gt;:8080</code>. Все тела запросов — JSON.</p>
+      <h2 data-i18n="api.title">HTTP API</h2>
+      <p data-i18n="api.intro">Базовый URL: <code>http://&lt;scheduler-host&gt;:8080</code>. Все тела запросов — JSON.</p>
 
-      <h3>Health</h3>
+      <h3 data-i18n="api.health">Health</h3>
       <table>
         <tr>
           <td><span class="method method-get">GET</span> <code>/health</code></td>
-          <td>Проверка доступности scheduler</td>
+          <td data-i18n="api.healthDesc">Проверка доступности scheduler</td>
         </tr>
       </table>
       <pre><code>{ "status": "ok" }</code></pre>
@@ -456,63 +491,63 @@
       <table>
         <tr>
           <td><span class="method method-post">POST</span> <code>/jobs</code></td>
-          <td>Создать job</td>
+          <td data-i18n="api.jobs.create">Создать job</td>
         </tr>
         <tr>
           <td><span class="method method-get">GET</span> <code>/jobs/{id}</code></td>
-          <td>Получить job по ID</td>
+          <td data-i18n="api.jobs.get">Получить job по ID</td>
         </tr>
         <tr>
           <td><span class="method method-get">GET</span> <code>/jobs/{id}/logs</code></td>
-          <td>Логи stdout/stderr job (по попыткам, в порядке времени)</td>
+          <td data-i18n="api.jobs.logs">Логи stdout/stderr job (по попыткам, в порядке времени)</td>
         </tr>
       </table>
 
-      <p><strong>POST /jobs</strong> — тело запроса:</p>
+      <p data-i18n="api.jobs.postBody"><strong>POST /jobs</strong> — тело запроса:</p>
       <pre><code>{
   "input_path": "/data/in/video.mp4",
   "output_path": "/data/out/video.mp4",
   "ffmpeg_args": "-c:v libx264 -crf 23",
   "max_attempts": 3
 }</code></pre>
-      <p>Обязательные поля: <code>input_path</code>, <code>output_path</code>, <code>ffmpeg_args</code>. Ответ: <code>201 Created</code> с объектом job.</p>
+      <p data-i18n="api.jobs.postNote">Обязательные поля: <code>input_path</code>, <code>output_path</code>, <code>ffmpeg_args</code>. Ответ: <code>201 Created</code> с объектом job.</p>
 
-      <p><strong>GET /jobs/{id}/logs</strong> — ответ <code>200 OK</code> или <code>404</code>, если job не найден:</p>
+      <p data-i18n="api.jobs.logsBody"><strong>GET /jobs/{id}/logs</strong> — ответ <code>200 OK</code> или <code>404</code>, если job не найден:</p>
       <pre><code>{
   "job_id": "uuid",
   "logs": [
     { "id": 1, "ts": "2026-06-24T12:00:00Z", "stream": "stderr", "line": "..." }
   ]
 }</code></pre>
-      <p>При отсутствии логов возвращается пустой массив <code>logs</code>. Записи упорядочены по <code>ts</code>, затем по <code>id</code>.</p>
+      <p data-i18n="api.jobs.logsNote">При отсутствии логов возвращается пустой массив <code>logs</code>. Записи упорядочены по <code>ts</code>, затем по <code>id</code>.</p>
 
       <h3>Workers</h3>
       <table>
         <tr>
           <td><span class="method method-post">POST</span> <code>/workers/register</code></td>
-          <td>Регистрация или обновление воркера</td>
+          <td data-i18n="api.workers.register">Регистрация или обновление воркера</td>
         </tr>
         <tr>
           <td><span class="method method-post">POST</span> <code>/workers/heartbeat</code></td>
-          <td>Heartbeat воркера</td>
+          <td data-i18n="api.workers.heartbeat">Heartbeat воркера</td>
         </tr>
         <tr>
           <td><span class="method method-post">POST</span> <code>/workers/request-job</code></td>
-          <td>Запрос следующего job (SKIP LOCKED + lease)</td>
+          <td data-i18n="api.workers.request">Запрос следующего job (SKIP LOCKED + lease)</td>
         </tr>
         <tr>
           <td><span class="method method-post">POST</span> <code>/workers/job-result</code></td>
-          <td>Финализация job и запись логов</td>
+          <td data-i18n="api.workers.result">Финализация job и запись логов</td>
         </tr>
       </table>
 
-      <p><strong>POST /workers/request-job</strong>:</p>
+      <p data-i18n="api.workers.requestBody"><strong>POST /workers/request-job</strong>:</p>
       <pre><code>{ "worker_id": "uuid" }
 
 // Ответ — job или null, если очередь пуста:
 { "job": { ... } }</code></pre>
 
-      <p><strong>POST /workers/job-result</strong>:</p>
+      <p data-i18n="api.workers.resultBody"><strong>POST /workers/job-result</strong>:</p>
       <pre><code>{
   "worker_id": "uuid",
   "job_id": "uuid",
@@ -523,67 +558,67 @@
   ]
 }</code></pre>
 
-      <h3>Документация</h3>
+      <h3 data-i18n="api.docs">Документация</h3>
       <table>
         <tr>
           <td><span class="method method-get">GET</span> <code>/docs/</code></td>
-          <td>Эта страница документации</td>
+          <td data-i18n="api.docsDesc">Эта страница документации</td>
         </tr>
       </table>
     </section>
 
     <section id="env">
-      <h2>Переменные окружения</h2>
+      <h2 data-i18n="env.title">Переменные окружения</h2>
 
-      <h3>Scheduler (<code>cmd/scheduler</code>)</h3>
+      <h3 data-i18n="env.scheduler">Scheduler (<code>cmd/scheduler</code>)</h3>
       <table>
-        <thead><tr><th>Переменная</th><th>Обязательна</th><th>По умолчанию</th><th>Описание</th></tr></thead>
+        <thead><tr><th data-i18n="env.col.var">Переменная</th><th data-i18n="env.col.required">Обязательна</th><th data-i18n="env.col.default">По умолчанию</th><th data-i18n="env.col.desc">Описание</th></tr></thead>
         <tbody>
-          <tr><td><code>DB_DSN</code></td><td>да</td><td>—</td><td>PostgreSQL connection string</td></tr>
-          <tr><td><code>SCHEDULER_ADDR</code></td><td>нет</td><td><code>:8080</code></td><td>Адрес HTTP-сервера</td></tr>
+          <tr><td><code>DB_DSN</code></td><td data-i18n="env.yes">да</td><td>—</td><td data-i18n="env.scheduler.db">PostgreSQL connection string</td></tr>
+          <tr><td><code>SCHEDULER_ADDR</code></td><td data-i18n="env.no">нет</td><td><code>:8080</code></td><td data-i18n="env.scheduler.addr">Адрес HTTP-сервера</td></tr>
         </tbody>
       </table>
 
-      <h3>Worker (<code>cmd/worker</code>)</h3>
+      <h3 data-i18n="env.worker">Worker (<code>cmd/worker</code>)</h3>
       <table>
-        <thead><tr><th>Переменная</th><th>Обязательна</th><th>По умолчанию</th><th>Описание</th></tr></thead>
+        <thead><tr><th data-i18n="env.col.var">Переменная</th><th data-i18n="env.col.required">Обязательна</th><th data-i18n="env.col.default">По умолчанию</th><th data-i18n="env.col.desc">Описание</th></tr></thead>
         <tbody>
-          <tr><td><code>SCHEDULER_URL</code></td><td>да</td><td>—</td><td>URL scheduler, напр. <code>http://localhost:8080</code></td></tr>
-          <tr><td><code>WORKER_ID</code></td><td>нет</td><td>random UUID</td><td>ID воркера</td></tr>
-          <tr><td><code>WORKER_HOSTNAME</code></td><td>нет</td><td>os.Hostname()</td><td>Имя хоста</td></tr>
-          <tr><td><code>WORKER_CPU_CORES</code></td><td>нет</td><td>runtime.NumCPU()</td><td>Количество ядер</td></tr>
-          <tr><td><code>WORKER_MAX_PARALLEL_JOBS</code></td><td>нет</td><td><code>1</code></td><td>Параллельные job</td></tr>
-          <tr><td><code>WORKER_GPU_AVAILABLE</code></td><td>нет</td><td><code>false</code></td><td><code>true</code> или <code>1</code> для GPU</td></tr>
-          <tr><td><code>WORKER_HEARTBEAT_INTERVAL</code></td><td>нет</td><td><code>10s</code></td><td>Интервал heartbeat</td></tr>
-          <tr><td><code>WORKER_POLL_INTERVAL</code></td><td>нет</td><td><code>2s</code></td><td>Пауза при пустой очереди</td></tr>
+          <tr><td><code>SCHEDULER_URL</code></td><td data-i18n="env.yes">да</td><td>—</td><td data-i18n="env.worker.url">URL scheduler, напр. <code>http://localhost:8080</code></td></tr>
+          <tr><td><code>WORKER_ID</code></td><td data-i18n="env.no">нет</td><td>random UUID</td><td data-i18n="env.worker.id">ID воркера</td></tr>
+          <tr><td><code>WORKER_HOSTNAME</code></td><td data-i18n="env.no">нет</td><td>os.Hostname()</td><td data-i18n="env.worker.hostname">Имя хоста</td></tr>
+          <tr><td><code>WORKER_CPU_CORES</code></td><td data-i18n="env.no">нет</td><td>runtime.NumCPU()</td><td data-i18n="env.worker.cpu">Количество ядер</td></tr>
+          <tr><td><code>WORKER_MAX_PARALLEL_JOBS</code></td><td data-i18n="env.no">нет</td><td><code>1</code></td><td data-i18n="env.worker.maxJobs">Параллельные job</td></tr>
+          <tr><td><code>WORKER_GPU_AVAILABLE</code></td><td data-i18n="env.no">нет</td><td><code>false</code></td><td data-i18n="env.worker.gpu"><code>true</code> или <code>1</code> для GPU</td></tr>
+          <tr><td><code>WORKER_HEARTBEAT_INTERVAL</code></td><td data-i18n="env.no">нет</td><td><code>10s</code></td><td data-i18n="env.worker.heartbeat">Интервал heartbeat</td></tr>
+          <tr><td><code>WORKER_POLL_INTERVAL</code></td><td data-i18n="env.no">нет</td><td><code>2s</code></td><td data-i18n="env.worker.poll">Пауза при пустой очереди</td></tr>
         </tbody>
       </table>
     </section>
 
     <section id="quickstart">
-      <h2>Быстрый старт</h2>
-      <p>Рекомендуемый способ — <a href="#docker">Docker Compose</a>. Ниже — локальный запуск без контейнеров.</p>
+      <h2 data-i18n="quickstart.title">Быстрый старт</h2>
+      <p data-i18n="quickstart.intro">Рекомендуемый способ — <a href="#docker">Docker Compose</a>. Ниже — локальный запуск без контейнеров.</p>
       <ol>
-        <li>Поднять PostgreSQL и применить миграцию:</li>
+        <li data-i18n="quickstart.step1">Поднять PostgreSQL и применить миграцию:</li>
       </ol>
       <pre><code>psql "$DB_DSN" -f db/migrations/001_init.sql</code></pre>
 
       <ol start="2">
-        <li>Запустить scheduler:</li>
+        <li data-i18n="quickstart.step2">Запустить scheduler:</li>
       </ol>
       <pre><code>export DB_DSN="postgres://user:pass@localhost:5432/video?sslmode=disable"
 export SCHEDULER_ADDR=":8080"
 go run ./cmd/scheduler</code></pre>
 
       <ol start="3">
-        <li>Открыть документацию: <a href="/docs/" style="color: var(--accent);">http://localhost:8080/docs/</a></li>
-        <li>Запустить воркер (на машине с ffmpeg и доступом к файлам):</li>
+        <li data-i18n="quickstart.step3">Открыть документацию: <a href="/docs/" style="color: var(--accent);">http://localhost:8080/docs/</a></li>
+        <li data-i18n="quickstart.step4">Запустить воркер (на машине с ffmpeg и доступом к файлам):</li>
       </ol>
       <pre><code>export SCHEDULER_URL="http://localhost:8080"
 go run ./cmd/worker</code></pre>
 
       <ol start="5">
-        <li>Создать job:</li>
+        <li data-i18n="quickstart.step5">Создать job:</li>
       </ol>
       <pre><code>curl -s -X POST http://localhost:8080/jobs \
   -H "Content-Type: application/json" \
@@ -595,14 +630,14 @@ go run ./cmd/worker</code></pre>
     </section>
 
     <section id="docker">
-      <h2>Docker</h2>
-      <p>
+      <h2 data-i18n="docker.title">Docker</h2>
+      <p data-i18n="docker.intro">
         Стек из трёх сервисов: PostgreSQL 16, scheduler (HTTP API) и worker (ffmpeg).
         Схема БД применяется автоматически при первом старте postgres через
         <code>/docker-entrypoint-initdb.d/</code>.
       </p>
 
-      <h3>Структура</h3>
+      <h3 data-i18n="docker.structure">Структура</h3>
       <pre><code>Dockerfile                  # multi-stage: targets scheduler, worker
 docker-compose.yml          # оркестрация сервисов
 .env.example                # шаблон переменных (скопировать в .env)
@@ -611,31 +646,31 @@ docker/postgres/
 docker/worker/
   entrypoint.sh             # права на том /data для non-root worker</code></pre>
 
-      <h3>Переменные (.env)</h3>
+      <h3 data-i18n="docker.envVars">Переменные (.env)</h3>
       <table>
-        <thead><tr><th>Переменная</th><th>По умолчанию</th><th>Описание</th></tr></thead>
+        <thead><tr><th data-i18n="env.col.var">Переменная</th><th data-i18n="env.col.default">По умолчанию</th><th data-i18n="env.col.desc">Описание</th></tr></thead>
         <tbody>
-          <tr><td><code>POSTGRES_USER</code></td><td><code>video</code></td><td>Пользователь БД</td></tr>
-          <tr><td><code>POSTGRES_PASSWORD</code></td><td><code>video</code></td><td>Пароль БД (смените в prod)</td></tr>
-          <tr><td><code>POSTGRES_DB</code></td><td><code>video</code></td><td>Имя базы</td></tr>
-          <tr><td><code>POSTGRES_PORT</code></td><td><code>5432</code></td><td>Порт postgres на хосте</td></tr>
-          <tr><td><code>SCHEDULER_PORT</code></td><td><code>8080</code></td><td>Порт scheduler на хосте</td></tr>
-          <tr><td><code>WORKER_MAX_PARALLEL_JOBS</code></td><td><code>1</code></td><td>Параллельные job на воркер</td></tr>
-          <tr><td><code>WORKER_GPU_AVAILABLE</code></td><td><code>false</code></td><td>GPU у воркера</td></tr>
+          <tr><td><code>POSTGRES_USER</code></td><td><code>video</code></td><td data-i18n="docker.postgresUser">Пользователь БД</td></tr>
+          <tr><td><code>POSTGRES_PASSWORD</code></td><td><code>video</code></td><td data-i18n="docker.postgresPass">Пароль БД (смените в prod)</td></tr>
+          <tr><td><code>POSTGRES_DB</code></td><td><code>video</code></td><td data-i18n="docker.postgresDb">Имя базы</td></tr>
+          <tr><td><code>POSTGRES_PORT</code></td><td><code>5432</code></td><td data-i18n="docker.postgresPort">Порт postgres на хосте</td></tr>
+          <tr><td><code>SCHEDULER_PORT</code></td><td><code>8080</code></td><td data-i18n="docker.schedulerPort">Порт scheduler на хосте</td></tr>
+          <tr><td><code>WORKER_MAX_PARALLEL_JOBS</code></td><td><code>1</code></td><td data-i18n="docker.workerMaxJobs">Параллельные job на воркер</td></tr>
+          <tr><td><code>WORKER_GPU_AVAILABLE</code></td><td><code>false</code></td><td data-i18n="docker.workerGpu">GPU у воркера</td></tr>
         </tbody>
       </table>
 
-      <h3>Запуск</h3>
+      <h3 data-i18n="docker.run">Запуск</h3>
       <pre><code>cp .env.example .env
 docker compose up --build -d
 docker compose ps</code></pre>
-      <p>Документация API: <code>http://localhost:8080/docs/</code> (порт из <code>SCHEDULER_PORT</code>).</p>
+      <p data-i18n="docker.docsUrl">Документация API: <code>http://localhost:8080/docs/</code> (порт из <code>SCHEDULER_PORT</code>).</p>
 
-      <h3>Масштабирование воркеров</h3>
+      <h3 data-i18n="docker.scale">Масштабирование воркеров</h3>
       <pre><code>docker compose up -d --scale worker=3</code></pre>
-      <p>Все воркеры делят том <code>jobdata</code>, смонтированный в <code>/data</code> — пути в job указывайте относительно него.</p>
+      <p data-i18n="docker.scaleNote">Все воркеры делят том <code>jobdata</code>, смонтированный в <code>/data</code> — пути в job указывайте относительно него.</p>
 
-      <h3>Пример job в Docker</h3>
+      <h3 data-i18n="docker.example">Пример job в Docker</h3>
       <pre><code># положить исходник в общий том
 docker compose cp ./sample.mp4 worker:/data/in.mp4
 
@@ -647,23 +682,23 @@ curl -s -X POST http://localhost:8080/jobs \
     "ffmpeg_args": "-c:v libx264 -crf 28"
   }' | jq</code></pre>
 
-      <h3>Образы</h3>
+      <h3 data-i18n="docker.images">Образы</h3>
       <table>
-        <thead><tr><th>Сервис</th><th>Образ</th><th>Особенности</th></tr></thead>
+        <thead><tr><th data-i18n="docker.col.service">Сервис</th><th data-i18n="docker.col.image">Образ</th><th data-i18n="docker.col.notes">Особенности</th></tr></thead>
         <tbody>
-          <tr><td><code>postgres</code></td><td><code>postgres:16-alpine</code></td><td>healthcheck, persistent volume, init SQL</td></tr>
-          <tr><td><code>scheduler</code></td><td>сборка <code>target: scheduler</code></td><td>multi-stage Go, non-root, <code>/health</code></td></tr>
-          <tr><td><code>worker</code></td><td>сборка <code>target: worker</code></td><td>ffmpeg, том <code>/data</code>, drop privileges</td></tr>
+          <tr><td><code>postgres</code></td><td><code>postgres:16-alpine</code></td><td data-i18n="docker.img.postgres">healthcheck, persistent volume, init SQL</td></tr>
+          <tr><td><code>scheduler</code></td><td data-i18n="docker.img.schedulerBuild">сборка <code>target: scheduler</code></td><td data-i18n="docker.img.scheduler">multi-stage Go, non-root, <code>/health</code></td></tr>
+          <tr><td><code>worker</code></td><td data-i18n="docker.img.workerBuild">сборка <code>target: worker</code></td><td data-i18n="docker.img.worker">ffmpeg, том <code>/data</code>, drop privileges</td></tr>
         </tbody>
       </table>
 
-      <h3>Остановка и очистка</h3>
+      <h3 data-i18n="docker.cleanup">Остановка и очистка</h3>
       <pre><code>docker compose down          # остановить, сохранить volumes
 docker compose down -v       # удалить volumes (данные БД и /data)</code></pre>
     </section>
 
     <section id="structure">
-      <h2>Структура проекта</h2>
+      <h2 data-i18n="structure.title">Структура проекта</h2>
       <pre><code>go_distributed_system/
 ├── cmd/
 │   ├── scheduler/          # HTTP API сервер
@@ -683,93 +718,636 @@ docker compose down -v       # удалить volumes (данные БД и /dat
 ├── web/docs/               # HTML документация + embed
 ├── Dockerfile              # scheduler + worker targets
 ├── docker-compose.yml
+├── docker-compose.test.yml # PostgreSQL для integration-тестов (порт 5433)
 ├── Makefile                # test, test-integration, ci
 ├── .env.example
 └── go.mod</code></pre>
     </section>
 
     <section id="testing">
-      <h2>Тесты и CI</h2>
-      <p>
+      <h2 data-i18n="testing.title">Тесты и CI</h2>
+      <p data-i18n="testing.intro">
         Unit-тесты не требуют PostgreSQL: HTTP handlers используют интерфейс <code>api.JobStore</code>
-        с mock-реализацией. Integration-тесты (build tag <code>integration</code>) подключаются к PostgreSQL
-        через переменную <code>DB_DSN</code>.
+        с mock-реализацией. Integration-тесты (build tag <code>integration</code>) подключаются
+        <strong>только</strong> к тестовой БД через <code>TEST_DB_DSN</code> (имя базы должно оканчиваться на <code>_test</code>).
+        Dev-база из <code>docker-compose.yml</code> (порт 5432) не используется.
       </p>
 
-      <h3>Локальный запуск</h3>
+      <h3 data-i18n="testing.local">Локальный запуск</h3>
       <pre><code># unit-тесты (быстро, без БД)
 make test
 
-# integration (нужен PostgreSQL, например docker compose up -d postgres)
-export DB_DSN=postgres://video:video@localhost:5432/video?sslmode=disable
+# integration: поднимает postgres-test на порту 5433, прогоняет тесты, данные в tmpfs
 make test-integration
+
+# остановить тестовый postgres
+make test-db-down
 
 # полный набор как в CI
 make ci</code></pre>
 
-      <h3>Пирамида тестов</h3>
+      <p data-i18n="testing.dsn">
+        Тестовый PostgreSQL описан в <code>docker-compose.test.yml</code>:
+        пользователь/БД <code>video_test</code>, порт <code>5433</code>.
+        DSN по умолчанию:
+        <code>postgres://video_test:video_test@127.0.0.1:5433/video_test?sslmode=disable</code>
+      </p>
+
+      <h3 data-i18n="testing.pyramid">Пирамида тестов</h3>
       <table>
         <thead>
-          <tr><th>Слой</th><th>Пакет</th><th>Что проверяет</th></tr>
+          <tr><th data-i18n="testing.col.layer">Слой</th><th data-i18n="testing.col.package">Пакет</th><th data-i18n="testing.col.checks">Что проверяет</th></tr>
         </thead>
         <tbody>
           <tr>
             <td>Unit</td>
             <td><code>internal/ffmpeg</code></td>
-            <td><code>splitArgs</code>, <code>buildArgs</code>, проверка путей in/out</td>
+            <td data-i18n="testing.ffmpeg">splitArgs, buildArgs, проверка путей in/out</td>
           </tr>
           <tr>
             <td>Unit</td>
             <td><code>internal/api</code></td>
-            <td>Валидация HTTP, коды ответов (mock <code>JobStore</code>)</td>
+            <td data-i18n="testing.api">Валидация HTTP, коды ответов (mock JobStore)</td>
           </tr>
           <tr>
             <td>Unit</td>
             <td><code>internal/worker</code></td>
-            <td>HTTP-клиент scheduler (<code>httptest.Server</code>)</td>
+            <td data-i18n="testing.worker">HTTP-клиент scheduler (httptest.Server)</td>
           </tr>
           <tr>
             <td>Integration</td>
             <td><code>internal/store</code></td>
-            <td>Очередь, SKIP LOCKED, lease, retry/failed, логи</td>
+            <td data-i18n="testing.store">Очередь, SKIP LOCKED, lease, retry/failed, логи</td>
           </tr>
           <tr>
             <td>Integration</td>
             <td><code>internal/api</code></td>
-            <td>Smoke: create → register → request-job → result → get/logs</td>
+            <td data-i18n="testing.apiSmoke">Smoke: create → register → request-job → result → get/logs</td>
           </tr>
         </tbody>
       </table>
 
       <h3>GitHub Actions</h3>
-      <p>
+      <p data-i18n="testing.gha">
         Workflow <code>.github/workflows/ci.yml</code> запускается на pull request и push в <code>main</code>/<code>master</code>:
       </p>
       <ol>
-        <li><strong>lint</strong> — <code>go vet</code>, <code>go mod verify</code></li>
-        <li><strong>unit-tests</strong> — <code>go test -short ./...</code></li>
-        <li><strong>build</strong> — сборка всех пакетов и бинарников <code>scheduler</code>, <code>worker</code></li>
-        <li><strong>integration-tests</strong> — PostgreSQL 16 (service container), <code>go test -p 1 -tags=integration</code> (один пакет за раз — общая БД)</li>
+        <li data-i18n="testing.gha.lint"><strong>lint</strong> — go vet, go mod verify</li>
+        <li data-i18n="testing.gha.unit"><strong>unit-tests</strong> — go test -short ./...</li>
+        <li data-i18n="testing.gha.build"><strong>build</strong> — сборка всех пакетов и бинарников scheduler, worker</li>
+        <li data-i18n="testing.gha.integration"><strong>integration-tests</strong> — PostgreSQL 16 (service container), go test -p 1 -tags=integration (один пакет за раз — общая БД)</li>
       </ol>
     </section>
 
     <section id="limitations">
-      <h2>Ограничения и TODO</h2>
+      <h2 data-i18n="limitations.title">Ограничения и TODO</h2>
       <ul>
-        <li><span class="badge badge-todo">TODO</span> Фоновый reaper для DEAD воркеров и истёкших lease</li>
-        <li><span class="badge badge-todo">TODO</span> Автоматический мигратор для локального запуска (в Docker init SQL применяется при первом старте postgres)</li>
-        <li>At-least-once семантика — возможны дублирующиеся запуски ffmpeg</li>
-        <li>Логи хранятся в PostgreSQL — не оптимально для очень больших объёмов</li>
-        <li>Фильтрация job по GPU/CPU пока не используется при выдаче</li>
+        <li><span class="badge badge-todo">TODO</span> <span data-i18n="limitations.reaper">Фоновый reaper для DEAD воркеров и истёкших lease</span></li>
+        <li><span class="badge badge-todo">TODO</span> <span data-i18n="limitations.migrator">Автоматический мигратор для локального запуска (в Docker init SQL применяется при первом старте postgres)</span></li>
+        <li data-i18n="limitations.atLeastOnce">At-least-once семантика — возможны дублирующиеся запуски ffmpeg</li>
+        <li data-i18n="limitations.logs">Логи хранятся в PostgreSQL — не оптимально для очень больших объёмов</li>
+        <li data-i18n="limitations.gpu">Фильтрация job по GPU/CPU пока не используется при выдаче</li>
       </ul>
     </section>
 
-    <footer>
+    <footer data-i18n="footer">
       Документация проекта go_distributed_system · обновляйте <code>web/docs/index.html</code> при изменении API, схемы БД или архитектуры.
     </footer>
   </main>
 
   <script>
+    const I18N = {
+      ru: {
+        'page.title': 'go_distributed_system — документация',
+        'logo.subtitle': 'Распределённое сжатие видео',
+        'nav.overview': 'Обзор',
+        'nav.architecture': 'Архитектура',
+        'nav.components': 'Компоненты',
+        'nav.jobLifecycle': 'Жизненный цикл Job',
+        'nav.database': 'База данных',
+        'nav.api': 'HTTP API',
+        'nav.env': 'Переменные окружения',
+        'nav.quickstart': 'Быстрый старт',
+        'nav.docker': 'Docker',
+        'nav.structure': 'Структура проекта',
+        'nav.testing': 'Тесты и CI',
+        'nav.limitations': 'Ограничения и TODO',
+        'hero.title': 'Distributed Video Compression Platform',
+        'hero.desc': 'Отказоустойчивая платформа для запуска <code>ffmpeg</code> на нескольких узлах. Планировщик (Scheduler) принимает задания через HTTP API, воркеры забирают их из очереди PostgreSQL и выполняют транскодирование.',
+        'overview.title': 'Обзор',
+        'overview.p1': 'Проект реализует минимально жизнеспособную распределённую систему обработки видео. Очередь заданий хранится в PostgreSQL и выдаётся через <code>SELECT … FOR UPDATE SKIP LOCKED</code> — без внешнего брокера сообщений.',
+        'overview.card.scheduler': 'HTTP API: создание job, регистрация воркеров, выдача задач, финализация результатов.',
+        'overview.card.worker': 'Регистрация, heartbeat, polling заданий, запуск ffmpeg, отправка логов.',
+        'overview.card.postgres': 'Единственный источник истины: jobs, workers, job_logs, lease TTL.',
+        'architecture.title': 'Архитектура',
+        'architecture.principles': 'Ключевые принципы',
+        'architecture.atLeastOnce': '<strong>At-least-once</strong> — возможны повторные выполнения при сбоях воркера или истечении lease.',
+        'architecture.lease': '<strong>Lease</strong> — при выдаче job воркеру устанавливается <code>lease_expires_at</code> (по умолчанию 30 мин).',
+        'architecture.skipLocked': '<strong>SKIP LOCKED</strong> — несколько воркеров могут безопасно конкурировать за задания без блокировок.',
+        'components.title': 'Компоненты',
+        'components.scheduler': 'Точка входа HTTP-сервера. Подключается к PostgreSQL через <code>DB_DSN</code>, слушает <code>SCHEDULER_ADDR</code> (по умолчанию <code>:8080</code>).',
+        'components.worker': 'Точка входа воркера. Регистрируется в scheduler, шлёт heartbeat, параллельно обрабатывает до <code>max_parallel_jobs</code> заданий.',
+        'components.api': 'HTTP-хендлеры: создание и получение job, регистрация воркеров, heartbeat, выдача job (<code>AcquireJob</code>), финализация (<code>FinishJob</code>).',
+        'components.store': 'Слой доступа к PostgreSQL: CRUD для jobs и workers, атомарная выдача заданий, запись логов в транзакции.',
+        'components.workerPkg': 'Клиент scheduler API и основной цикл воркера: polling, запуск ffmpeg, отправка результата.',
+        'components.ffmpeg': 'Обёртка над <code>exec ffmpeg</code>: сбор stdout/stderr построчно, проверка входного файла, создание директории для выхода.',
+        'jobLifecycle.title': 'Жизненный цикл Job',
+        'jobLifecycle.col.status': 'Статус',
+        'jobLifecycle.col.desc': 'Описание',
+        'jobLifecycle.queued': 'Задание создано и ждёт воркера',
+        'jobLifecycle.running': 'Назначено воркеру, установлен lease',
+        'jobLifecycle.completed': 'Успешно завершено (финальный статус)',
+        'jobLifecycle.failed': 'Исчерпаны попытки (<code>attempt ≥ max_attempts</code>)',
+        'jobLifecycle.retry': 'Ошибка выполнения, будет повторно поставлено в очередь',
+        'jobLifecycle.note': 'При создании job через API статус сразу <code>QUEUED</code>. При выдаче воркеру <code>attempt</code> увеличивается на 1. Статус <code>NEW</code> зарезервирован в схеме БД, но пока не используется в коде.',
+        'database.title': 'База данных',
+        'database.migration': 'Миграция: <code>db/migrations/001_init.sql</code>',
+        'database.workersTable': 'Таблица <code>workers</code>',
+        'database.jobsTable': 'Таблица <code>jobs</code>',
+        'database.logsTable': 'Таблица <code>job_logs</code>',
+        'database.col.field': 'Поле',
+        'database.col.type': 'Тип',
+        'database.col.desc': 'Описание',
+        'database.workers.id': 'Идентификатор воркера',
+        'database.workers.hostname': 'Имя хоста',
+        'database.workers.cpu': 'Количество CPU',
+        'database.workers.gpu': 'Наличие GPU',
+        'database.workers.maxJobs': 'Лимит параллельных job',
+        'database.workers.heartbeat': 'Последний heartbeat',
+        'database.workers.status': '<code>ACTIVE</code> | <code>DEAD</code>',
+        'database.jobs.id': 'Идентификатор job',
+        'database.jobs.input': 'Путь к входному файлу (на воркере)',
+        'database.jobs.output': 'Путь к выходному файлу',
+        'database.jobs.ffmpeg': 'Аргументы ffmpeg (без -i и output)',
+        'database.jobs.status': 'Статус жизненного цикла',
+        'database.jobs.worker': 'Текущий воркер',
+        'database.jobs.attempt': 'Номер попытки',
+        'database.jobs.maxAttempts': 'Максимум попыток (по умолчанию 3)',
+        'database.jobs.lease': 'Срок lease при RUNNING',
+        'database.logsDesc': 'Строки stdout/stderr с таймштампом. Записываются при финализации job в транзакции с обновлением статуса.',
+        'api.title': 'HTTP API',
+        'api.intro': 'Базовый URL: <code>http://&lt;scheduler-host&gt;:8080</code>. Все тела запросов — JSON.',
+        'api.health': 'Health',
+        'api.healthDesc': 'Проверка доступности scheduler',
+        'api.jobs.create': 'Создать job',
+        'api.jobs.get': 'Получить job по ID',
+        'api.jobs.logs': 'Логи stdout/stderr job (по попыткам, в порядке времени)',
+        'api.jobs.postBody': '<strong>POST /jobs</strong> — тело запроса:',
+        'api.jobs.postNote': 'Обязательные поля: <code>input_path</code>, <code>output_path</code>, <code>ffmpeg_args</code>. Ответ: <code>201 Created</code> с объектом job.',
+        'api.jobs.logsBody': '<strong>GET /jobs/{id}/logs</strong> — ответ <code>200 OK</code> или <code>404</code>, если job не найден:',
+        'api.jobs.logsNote': 'При отсутствии логов возвращается пустой массив <code>logs</code>. Записи упорядочены по <code>ts</code>, затем по <code>id</code>.',
+        'api.workers.register': 'Регистрация или обновление воркера',
+        'api.workers.heartbeat': 'Heartbeat воркера',
+        'api.workers.request': 'Запрос следующего job (SKIP LOCKED + lease)',
+        'api.workers.result': 'Финализация job и запись логов',
+        'api.workers.requestBody': '<strong>POST /workers/request-job</strong>:',
+        'api.workers.resultBody': '<strong>POST /workers/job-result</strong>:',
+        'api.docs': 'Документация',
+        'api.docsDesc': 'Эта страница документации',
+        'env.title': 'Переменные окружения',
+        'env.scheduler': 'Scheduler (<code>cmd/scheduler</code>)',
+        'env.worker': 'Worker (<code>cmd/worker</code>)',
+        'env.col.var': 'Переменная',
+        'env.col.required': 'Обязательна',
+        'env.col.default': 'По умолчанию',
+        'env.col.desc': 'Описание',
+        'env.yes': 'да',
+        'env.no': 'нет',
+        'env.scheduler.db': 'PostgreSQL connection string',
+        'env.scheduler.addr': 'Адрес HTTP-сервера',
+        'env.worker.url': 'URL scheduler, напр. <code>http://localhost:8080</code>',
+        'env.worker.id': 'ID воркера',
+        'env.worker.hostname': 'Имя хоста',
+        'env.worker.cpu': 'Количество ядер',
+        'env.worker.maxJobs': 'Параллельные job',
+        'env.worker.gpu': '<code>true</code> или <code>1</code> для GPU',
+        'env.worker.heartbeat': 'Интервал heartbeat',
+        'env.worker.poll': 'Пауза при пустой очереди',
+        'quickstart.title': 'Быстрый старт',
+        'quickstart.intro': 'Рекомендуемый способ — <a href="#docker">Docker Compose</a>. Ниже — локальный запуск без контейнеров.',
+        'quickstart.step1': 'Поднять PostgreSQL и применить миграцию:',
+        'quickstart.step2': 'Запустить scheduler:',
+        'quickstart.step3': 'Открыть документацию: <a href="/docs/" style="color: var(--accent);">http://localhost:8080/docs/</a>',
+        'quickstart.step4': 'Запустить воркер (на машине с ffmpeg и доступом к файлам):',
+        'quickstart.step5': 'Создать job:',
+        'docker.title': 'Docker',
+        'docker.intro': 'Стек из трёх сервисов: PostgreSQL 16, scheduler (HTTP API) и worker (ffmpeg). Схема БД применяется автоматически при первом старте postgres через <code>/docker-entrypoint-initdb.d/</code>.',
+        'docker.structure': 'Структура',
+        'docker.envVars': 'Переменные (.env)',
+        'docker.postgresUser': 'Пользователь БД',
+        'docker.postgresPass': 'Пароль БД (смените в prod)',
+        'docker.postgresDb': 'Имя базы',
+        'docker.postgresPort': 'Порт postgres на хосте',
+        'docker.schedulerPort': 'Порт scheduler на хосте',
+        'docker.workerMaxJobs': 'Параллельные job на воркер',
+        'docker.workerGpu': 'GPU у воркера',
+        'docker.run': 'Запуск',
+        'docker.docsUrl': 'Документация API: <code>http://localhost:8080/docs/</code> (порт из <code>SCHEDULER_PORT</code>).',
+        'docker.scale': 'Масштабирование воркеров',
+        'docker.scaleNote': 'Все воркеры делят том <code>jobdata</code>, смонтированный в <code>/data</code> — пути в job указывайте относительно него.',
+        'docker.example': 'Пример job в Docker',
+        'docker.images': 'Образы',
+        'docker.col.service': 'Сервис',
+        'docker.col.image': 'Образ',
+        'docker.col.notes': 'Особенности',
+        'docker.img.postgres': 'healthcheck, persistent volume, init SQL',
+        'docker.img.schedulerBuild': 'сборка <code>target: scheduler</code>',
+        'docker.img.scheduler': 'multi-stage Go, non-root, <code>/health</code>',
+        'docker.img.workerBuild': 'сборка <code>target: worker</code>',
+        'docker.img.worker': 'ffmpeg, том <code>/data</code>, drop privileges',
+        'docker.cleanup': 'Остановка и очистка',
+        'structure.title': 'Структура проекта',
+        'testing.title': 'Тесты и CI',
+        'testing.intro': 'Unit-тесты не требуют PostgreSQL: HTTP handlers используют интерфейс <code>api.JobStore</code> с mock-реализацией. Integration-тесты (build tag <code>integration</code>) подключаются <strong>только</strong> к тестовой БД через <code>TEST_DB_DSN</code> (имя базы должно оканчиваться на <code>_test</code>). Dev-база из <code>docker-compose.yml</code> (порт 5432) не используется.',
+        'testing.local': 'Локальный запуск',
+        'testing.dsn': 'Тестовый PostgreSQL описан в <code>docker-compose.test.yml</code>: пользователь/БД <code>video_test</code>, порт <code>5433</code>. DSN по умолчанию: <code>postgres://video_test:video_test@127.0.0.1:5433/video_test?sslmode=disable</code>',
+        'testing.pyramid': 'Пирамида тестов',
+        'testing.col.layer': 'Слой',
+        'testing.col.package': 'Пакет',
+        'testing.col.checks': 'Что проверяет',
+        'testing.ffmpeg': '<code>splitArgs</code>, <code>buildArgs</code>, проверка путей in/out',
+        'testing.api': 'Валидация HTTP, коды ответов (mock <code>JobStore</code>)',
+        'testing.worker': 'HTTP-клиент scheduler (<code>httptest.Server</code>)',
+        'testing.store': 'Очередь, SKIP LOCKED, lease, retry/failed, логи',
+        'testing.apiSmoke': 'Smoke: create → register → request-job → result → get/logs',
+        'testing.gha': 'Workflow <code>.github/workflows/ci.yml</code> запускается на pull request и push в <code>main</code>/<code>master</code>:',
+        'testing.gha.lint': '<strong>lint</strong> — <code>go vet</code>, <code>go mod verify</code>',
+        'testing.gha.unit': '<strong>unit-tests</strong> — <code>go test -short ./...</code>',
+        'testing.gha.build': '<strong>build</strong> — сборка всех пакетов и бинарников <code>scheduler</code>, <code>worker</code>',
+        'testing.gha.integration': '<strong>integration-tests</strong> — PostgreSQL 16 (service container), <code>go test -p 1 -tags=integration</code> (один пакет за раз — общая БД)',
+        'limitations.title': 'Ограничения и TODO',
+        'limitations.reaper': 'Фоновый reaper для DEAD воркеров и истёкших lease',
+        'limitations.migrator': 'Автоматический мигратор для локального запуска (в Docker init SQL применяется при первом старте postgres)',
+        'limitations.atLeastOnce': 'At-least-once семантика — возможны дублирующиеся запуски ffmpeg',
+        'limitations.logs': 'Логи хранятся в PostgreSQL — не оптимально для очень больших объёмов',
+        'limitations.gpu': 'Фильтрация job по GPU/CPU пока не используется при выдаче',
+        'footer': 'Документация проекта go_distributed_system · обновляйте <code>web/docs/index.html</code> при изменении API, схемы БД или архитектуры.'
+      },
+      en: {
+        'page.title': 'go_distributed_system — documentation',
+        'logo.subtitle': 'Distributed video compression',
+        'nav.overview': 'Overview',
+        'nav.architecture': 'Architecture',
+        'nav.components': 'Components',
+        'nav.jobLifecycle': 'Job lifecycle',
+        'nav.database': 'Database',
+        'nav.api': 'HTTP API',
+        'nav.env': 'Environment variables',
+        'nav.quickstart': 'Quick start',
+        'nav.docker': 'Docker',
+        'nav.structure': 'Project structure',
+        'nav.testing': 'Tests & CI',
+        'nav.limitations': 'Limitations & TODO',
+        'hero.title': 'Distributed Video Compression Platform',
+        'hero.desc': 'Fault-tolerant platform for running <code>ffmpeg</code> across multiple nodes. The scheduler accepts jobs via HTTP API; workers pull from a PostgreSQL queue and transcode video.',
+        'overview.title': 'Overview',
+        'overview.p1': 'The project implements a minimum viable distributed video processing system. The job queue lives in PostgreSQL and is dispatched via <code>SELECT … FOR UPDATE SKIP LOCKED</code> — no external message broker.',
+        'overview.card.scheduler': 'HTTP API: create jobs, register workers, dispatch tasks, finalize results.',
+        'overview.card.worker': 'Registration, heartbeat, job polling, ffmpeg execution, log upload.',
+        'overview.card.postgres': 'Single source of truth: jobs, workers, job_logs, lease TTL.',
+        'architecture.title': 'Architecture',
+        'architecture.principles': 'Key principles',
+        'architecture.atLeastOnce': '<strong>At-least-once</strong> — duplicate runs are possible on worker failure or lease expiry.',
+        'architecture.lease': '<strong>Lease</strong> — when a job is assigned, <code>lease_expires_at</code> is set (default 30 min).',
+        'architecture.skipLocked': '<strong>SKIP LOCKED</strong> — multiple workers can safely compete for jobs without blocking.',
+        'components.title': 'Components',
+        'components.scheduler': 'HTTP server entry point. Connects to PostgreSQL via <code>DB_DSN</code>, listens on <code>SCHEDULER_ADDR</code> (default <code>:8080</code>).',
+        'components.worker': 'Worker entry point. Registers with the scheduler, sends heartbeats, processes up to <code>max_parallel_jobs</code> jobs in parallel.',
+        'components.api': 'HTTP handlers: create/get jobs, worker registration, heartbeat, job dispatch (<code>AcquireJob</code>), finalization (<code>FinishJob</code>).',
+        'components.store': 'PostgreSQL access layer: CRUD for jobs and workers, atomic dispatch, transactional log writes.',
+        'components.workerPkg': 'Scheduler API client and worker loop: polling, ffmpeg execution, result upload.',
+        'components.ffmpeg': 'Wrapper around <code>exec ffmpeg</code>: line-by-line stdout/stderr capture, input validation, output directory creation.',
+        'jobLifecycle.title': 'Job lifecycle',
+        'jobLifecycle.col.status': 'Status',
+        'jobLifecycle.col.desc': 'Description',
+        'jobLifecycle.queued': 'Job created, waiting for a worker',
+        'jobLifecycle.running': 'Assigned to a worker, lease set',
+        'jobLifecycle.completed': 'Completed successfully (final status)',
+        'jobLifecycle.failed': 'Attempts exhausted (<code>attempt ≥ max_attempts</code>)',
+        'jobLifecycle.retry': 'Execution error, will be re-queued',
+        'jobLifecycle.note': 'Jobs created via API start as <code>QUEUED</code>. On dispatch, <code>attempt</code> increments by 1. Status <code>NEW</code> is reserved in the DB schema but not used in code yet.',
+        'database.title': 'Database',
+        'database.migration': 'Migration: <code>db/migrations/001_init.sql</code>',
+        'database.workersTable': 'Table <code>workers</code>',
+        'database.jobsTable': 'Table <code>jobs</code>',
+        'database.logsTable': 'Table <code>job_logs</code>',
+        'database.col.field': 'Field',
+        'database.col.type': 'Type',
+        'database.col.desc': 'Description',
+        'database.workers.id': 'Worker identifier',
+        'database.workers.hostname': 'Hostname',
+        'database.workers.cpu': 'CPU count',
+        'database.workers.gpu': 'GPU available',
+        'database.workers.maxJobs': 'Max parallel jobs',
+        'database.workers.heartbeat': 'Last heartbeat',
+        'database.workers.status': '<code>ACTIVE</code> | <code>DEAD</code>',
+        'database.jobs.id': 'Job identifier',
+        'database.jobs.input': 'Input file path (on worker)',
+        'database.jobs.output': 'Output file path',
+        'database.jobs.ffmpeg': 'ffmpeg args (without -i and output)',
+        'database.jobs.status': 'Lifecycle status',
+        'database.jobs.worker': 'Current worker',
+        'database.jobs.attempt': 'Attempt number',
+        'database.jobs.maxAttempts': 'Max attempts (default 3)',
+        'database.jobs.lease': 'Lease expiry when RUNNING',
+        'database.logsDesc': 'stdout/stderr lines with timestamps. Written on job finalization in a transaction with status update.',
+        'api.title': 'HTTP API',
+        'api.intro': 'Base URL: <code>http://&lt;scheduler-host&gt;:8080</code>. All request bodies are JSON.',
+        'api.health': 'Health',
+        'api.healthDesc': 'Scheduler availability check',
+        'api.jobs.create': 'Create a job',
+        'api.jobs.get': 'Get job by ID',
+        'api.jobs.logs': 'Job stdout/stderr logs (by attempt, chronological)',
+        'api.jobs.postBody': '<strong>POST /jobs</strong> — request body:',
+        'api.jobs.postNote': 'Required fields: <code>input_path</code>, <code>output_path</code>, <code>ffmpeg_args</code>. Response: <code>201 Created</code> with job object.',
+        'api.jobs.logsBody': '<strong>GET /jobs/{id}/logs</strong> — response <code>200 OK</code> or <code>404</code> if job not found:',
+        'api.jobs.logsNote': 'Returns empty <code>logs</code> array when no logs exist. Ordered by <code>ts</code>, then <code>id</code>.',
+        'api.workers.register': 'Register or update worker',
+        'api.workers.heartbeat': 'Worker heartbeat',
+        'api.workers.request': 'Request next job (SKIP LOCKED + lease)',
+        'api.workers.result': 'Finalize job and store logs',
+        'api.workers.requestBody': '<strong>POST /workers/request-job</strong>:',
+        'api.workers.resultBody': '<strong>POST /workers/job-result</strong>:',
+        'api.docs': 'Documentation',
+        'api.docsDesc': 'This documentation page',
+        'env.title': 'Environment variables',
+        'env.scheduler': 'Scheduler (<code>cmd/scheduler</code>)',
+        'env.worker': 'Worker (<code>cmd/worker</code>)',
+        'env.col.var': 'Variable',
+        'env.col.required': 'Required',
+        'env.col.default': 'Default',
+        'env.col.desc': 'Description',
+        'env.yes': 'yes',
+        'env.no': 'no',
+        'env.scheduler.db': 'PostgreSQL connection string',
+        'env.scheduler.addr': 'HTTP server address',
+        'env.worker.url': 'Scheduler URL, e.g. <code>http://localhost:8080</code>',
+        'env.worker.id': 'Worker ID',
+        'env.worker.hostname': 'Hostname',
+        'env.worker.cpu': 'CPU core count',
+        'env.worker.maxJobs': 'Parallel jobs',
+        'env.worker.gpu': '<code>true</code> or <code>1</code> for GPU',
+        'env.worker.heartbeat': 'Heartbeat interval',
+        'env.worker.poll': 'Pause when queue is empty',
+        'quickstart.title': 'Quick start',
+        'quickstart.intro': 'Recommended: <a href="#docker">Docker Compose</a>. Below — local run without containers.',
+        'quickstart.step1': 'Start PostgreSQL and apply migration:',
+        'quickstart.step2': 'Start the scheduler:',
+        'quickstart.step3': 'Open docs: <a href="/docs/" style="color: var(--accent);">http://localhost:8080/docs/</a>',
+        'quickstart.step4': 'Start a worker (machine with ffmpeg and file access):',
+        'quickstart.step5': 'Create a job:',
+        'docker.title': 'Docker',
+        'docker.intro': 'Three-service stack: PostgreSQL 16, scheduler (HTTP API), and worker (ffmpeg). DB schema is applied automatically on first postgres start via <code>/docker-entrypoint-initdb.d/</code>.',
+        'docker.structure': 'Layout',
+        'docker.envVars': 'Variables (.env)',
+        'docker.postgresUser': 'DB user',
+        'docker.postgresPass': 'DB password (change in prod)',
+        'docker.postgresDb': 'Database name',
+        'docker.postgresPort': 'Postgres port on host',
+        'docker.schedulerPort': 'Scheduler port on host',
+        'docker.workerMaxJobs': 'Parallel jobs per worker',
+        'docker.workerGpu': 'Worker GPU flag',
+        'docker.run': 'Run',
+        'docker.docsUrl': 'API docs: <code>http://localhost:8080/docs/</code> (port from <code>SCHEDULER_PORT</code>).',
+        'docker.scale': 'Scaling workers',
+        'docker.scaleNote': 'All workers share the <code>jobdata</code> volume mounted at <code>/data</code> — use paths relative to it in jobs.',
+        'docker.example': 'Example job in Docker',
+        'docker.images': 'Images',
+        'docker.col.service': 'Service',
+        'docker.col.image': 'Image',
+        'docker.col.notes': 'Notes',
+        'docker.img.postgres': 'healthcheck, persistent volume, init SQL',
+        'docker.img.schedulerBuild': 'build <code>target: scheduler</code>',
+        'docker.img.scheduler': 'multi-stage Go, non-root, <code>/health</code>',
+        'docker.img.workerBuild': 'build <code>target: worker</code>',
+        'docker.img.worker': 'ffmpeg, <code>/data</code> volume, drop privileges',
+        'docker.cleanup': 'Stop and cleanup',
+        'structure.title': 'Project structure',
+        'testing.title': 'Tests & CI',
+        'testing.intro': 'Unit tests need no PostgreSQL: HTTP handlers use the <code>api.JobStore</code> interface with a mock. Integration tests (build tag <code>integration</code>) connect <strong>only</strong> to a test DB via <code>TEST_DB_DSN</code> (database name must end with <code>_test</code>). Dev DB from <code>docker-compose.yml</code> (port 5432) is not used.',
+        'testing.local': 'Local run',
+        'testing.dsn': 'Test PostgreSQL is defined in <code>docker-compose.test.yml</code>: user/DB <code>video_test</code>, port <code>5433</code>. Default DSN: <code>postgres://video_test:video_test@127.0.0.1:5433/video_test?sslmode=disable</code>',
+        'testing.pyramid': 'Test pyramid',
+        'testing.col.layer': 'Layer',
+        'testing.col.package': 'Package',
+        'testing.col.checks': 'What it verifies',
+        'testing.ffmpeg': '<code>splitArgs</code>, <code>buildArgs</code>, input/output path checks',
+        'testing.api': 'HTTP validation, response codes (mock <code>JobStore</code>)',
+        'testing.worker': 'Scheduler HTTP client (<code>httptest.Server</code>)',
+        'testing.store': 'Queue, SKIP LOCKED, lease, retry/failed, logs',
+        'testing.apiSmoke': 'Smoke: create → register → request-job → result → get/logs',
+        'testing.gha': 'Workflow <code>.github/workflows/ci.yml</code> runs on pull request and push to <code>main</code>/<code>master</code>:',
+        'testing.gha.lint': '<strong>lint</strong> — <code>go vet</code>, <code>go mod verify</code>',
+        'testing.gha.unit': '<strong>unit-tests</strong> — <code>go test -short ./...</code>',
+        'testing.gha.build': '<strong>build</strong> — build all packages and <code>scheduler</code>, <code>worker</code> binaries',
+        'testing.gha.integration': '<strong>integration-tests</strong> — PostgreSQL 16 (service container), <code>go test -p 1 -tags=integration</code> (one package at a time — shared DB)',
+        'limitations.title': 'Limitations & TODO',
+        'limitations.reaper': 'Background reaper for DEAD workers and expired leases',
+        'limitations.migrator': 'Standalone migration tool for local runs (Docker applies init SQL on first postgres start)',
+        'limitations.atLeastOnce': 'At-least-once semantics — duplicate ffmpeg runs are possible',
+        'limitations.logs': 'Logs stored in PostgreSQL — not ideal for very large volumes',
+        'limitations.gpu': 'GPU/CPU filtering is not used when dispatching jobs yet',
+        'footer': 'go_distributed_system documentation · update <code>web/docs/index.html</code> when API, DB schema, or architecture changes.'
+      },
+      ua: {
+        'page.title': 'go_distributed_system — документація',
+        'logo.subtitle': 'Розподілене стиснення відео',
+        'nav.overview': 'Огляд',
+        'nav.architecture': 'Архітектура',
+        'nav.components': 'Компоненти',
+        'nav.jobLifecycle': 'Життєвий цикл Job',
+        'nav.database': 'База даних',
+        'nav.api': 'HTTP API',
+        'nav.env': 'Змінні оточення',
+        'nav.quickstart': 'Швидкий старт',
+        'nav.docker': 'Docker',
+        'nav.structure': 'Структура проєкту',
+        'nav.testing': 'Тести та CI',
+        'nav.limitations': 'Обмеження та TODO',
+        'hero.title': 'Distributed Video Compression Platform',
+        'hero.desc': 'Відмовостійка платформа для запуску <code>ffmpeg</code> на кількох вузлах. Планувальник (Scheduler) приймає завдання через HTTP API, воркери забирають їх з черги PostgreSQL і виконують транскодування.',
+        'overview.title': 'Огляд',
+        'overview.p1': 'Проєкт реалізує мінімально життєздатну розподілену систему обробки відео. Черга завдань зберігається в PostgreSQL і видається через <code>SELECT … FOR UPDATE SKIP LOCKED</code> — без зовнішнього брокера повідомлень.',
+        'overview.card.scheduler': 'HTTP API: створення job, реєстрація воркерів, видача завдань, фіналізація результатів.',
+        'overview.card.worker': 'Реєстрація, heartbeat, polling завдань, запуск ffmpeg, надсилання логів.',
+        'overview.card.postgres': 'Єдине джерело істини: jobs, workers, job_logs, lease TTL.',
+        'architecture.title': 'Архітектура',
+        'architecture.principles': 'Ключові принципи',
+        'architecture.atLeastOnce': '<strong>At-least-once</strong> — можливі повторні виконання при збоях воркера або закінченні lease.',
+        'architecture.lease': '<strong>Lease</strong> — при видачі job воркеру встановлюється <code>lease_expires_at</code> (за замовчуванням 30 хв).',
+        'architecture.skipLocked': '<strong>SKIP LOCKED</strong> — кілька воркерів можуть безпечно конкурувати за завдання без блокувань.',
+        'components.title': 'Компоненти',
+        'components.scheduler': 'Точка входу HTTP-сервера. Підключається до PostgreSQL через <code>DB_DSN</code>, слухає <code>SCHEDULER_ADDR</code> (за замовчуванням <code>:8080</code>).',
+        'components.worker': 'Точка входу воркера. Реєструється в scheduler, надсилає heartbeat, паралельно обробляє до <code>max_parallel_jobs</code> завдань.',
+        'components.api': 'HTTP-обробники: створення та отримання job, реєстрація воркерів, heartbeat, видача job (<code>AcquireJob</code>), фіналізація (<code>FinishJob</code>).',
+        'components.store': 'Шар доступу до PostgreSQL: CRUD для jobs і workers, атомарна видача завдань, запис логів у транзакції.',
+        'components.workerPkg': 'Клієнт scheduler API та основний цикл воркера: polling, запуск ffmpeg, надсилання результату.',
+        'components.ffmpeg': 'Обгортка над <code>exec ffmpeg</code>: збір stdout/stderr по рядках, перевірка вхідного файлу, створення директорії для виходу.',
+        'jobLifecycle.title': 'Життєвий цикл Job',
+        'jobLifecycle.col.status': 'Статус',
+        'jobLifecycle.col.desc': 'Опис',
+        'jobLifecycle.queued': 'Завдання створено і чекає воркера',
+        'jobLifecycle.running': 'Призначено воркеру, встановлено lease',
+        'jobLifecycle.completed': 'Успішно завершено (фінальний статус)',
+        'jobLifecycle.failed': 'Вичерпано спроби (<code>attempt ≥ max_attempts</code>)',
+        'jobLifecycle.retry': 'Помилка виконання, буде повторно поставлено в чергу',
+        'jobLifecycle.note': 'При створенні job через API статус одразу <code>QUEUED</code>. При видачі воркеру <code>attempt</code> збільшується на 1. Статус <code>NEW</code> зарезервовано в схемі БД, але поки не використовується в коді.',
+        'database.title': 'База даних',
+        'database.migration': 'Міграція: <code>db/migrations/001_init.sql</code>',
+        'database.workersTable': 'Таблиця <code>workers</code>',
+        'database.jobsTable': 'Таблиця <code>jobs</code>',
+        'database.logsTable': 'Таблиця <code>job_logs</code>',
+        'database.col.field': 'Поле',
+        'database.col.type': 'Тип',
+        'database.col.desc': 'Опис',
+        'database.workers.id': 'Ідентифікатор воркера',
+        'database.workers.hostname': "Ім'я хоста",
+        'database.workers.cpu': 'Кількість CPU',
+        'database.workers.gpu': 'Наявність GPU',
+        'database.workers.maxJobs': 'Ліміт паралельних job',
+        'database.workers.heartbeat': 'Останній heartbeat',
+        'database.workers.status': '<code>ACTIVE</code> | <code>DEAD</code>',
+        'database.jobs.id': 'Ідентифікатор job',
+        'database.jobs.input': 'Шлях до вхідного файлу (на воркері)',
+        'database.jobs.output': 'Шлях до вихідного файлу',
+        'database.jobs.ffmpeg': 'Аргументи ffmpeg (без -i та output)',
+        'database.jobs.status': 'Статус життєвого циклу',
+        'database.jobs.worker': 'Поточний воркер',
+        'database.jobs.attempt': 'Номер спроби',
+        'database.jobs.maxAttempts': 'Максимум спроб (за замовчуванням 3)',
+        'database.jobs.lease': 'Термін lease при RUNNING',
+        'database.logsDesc': 'Рядки stdout/stderr з міткою часу. Записуються при фіналізації job у транзакції з оновленням статусу.',
+        'api.title': 'HTTP API',
+        'api.intro': 'Базовий URL: <code>http://&lt;scheduler-host&gt;:8080</code>. Усі тіла запитів — JSON.',
+        'api.health': 'Health',
+        'api.healthDesc': 'Перевірка доступності scheduler',
+        'api.jobs.create': 'Створити job',
+        'api.jobs.get': 'Отримати job за ID',
+        'api.jobs.logs': 'Логи stdout/stderr job (за спробами, у хронологічному порядку)',
+        'api.jobs.postBody': '<strong>POST /jobs</strong> — тіло запиту:',
+        'api.jobs.postNote': 'Обов\'язкові поля: <code>input_path</code>, <code>output_path</code>, <code>ffmpeg_args</code>. Відповідь: <code>201 Created</code> з об\'єктом job.',
+        'api.jobs.logsBody': '<strong>GET /jobs/{id}/logs</strong> — відповідь <code>200 OK</code> або <code>404</code>, якщо job не знайдено:',
+        'api.jobs.logsNote': 'При відсутності логів повертається порожній масив <code>logs</code>. Записи впорядковані за <code>ts</code>, потім за <code>id</code>.',
+        'api.workers.register': 'Реєстрація або оновлення воркера',
+        'api.workers.heartbeat': 'Heartbeat воркера',
+        'api.workers.request': 'Запит наступного job (SKIP LOCKED + lease)',
+        'api.workers.result': 'Фіналізація job і запис логів',
+        'api.workers.requestBody': '<strong>POST /workers/request-job</strong>:',
+        'api.workers.resultBody': '<strong>POST /workers/job-result</strong>:',
+        'api.docs': 'Документація',
+        'api.docsDesc': 'Ця сторінка документації',
+        'env.title': 'Змінні оточення',
+        'env.scheduler': 'Scheduler (<code>cmd/scheduler</code>)',
+        'env.worker': 'Worker (<code>cmd/worker</code>)',
+        'env.col.var': 'Змінна',
+        'env.col.required': 'Обов\'язкова',
+        'env.col.default': 'За замовчуванням',
+        'env.col.desc': 'Опис',
+        'env.yes': 'так',
+        'env.no': 'ні',
+        'env.scheduler.db': 'PostgreSQL connection string',
+        'env.scheduler.addr': 'Адреса HTTP-сервера',
+        'env.worker.url': 'URL scheduler, напр. <code>http://localhost:8080</code>',
+        'env.worker.id': 'ID воркера',
+        'env.worker.hostname': "Ім'я хоста",
+        'env.worker.cpu': 'Кількість ядер',
+        'env.worker.maxJobs': 'Паралельні job',
+        'env.worker.gpu': '<code>true</code> або <code>1</code> для GPU',
+        'env.worker.heartbeat': 'Інтервал heartbeat',
+        'env.worker.poll': 'Пауза при порожній черзі',
+        'quickstart.title': 'Швидкий старт',
+        'quickstart.intro': 'Рекомендований спосіб — <a href="#docker">Docker Compose</a>. Нижче — локальний запуск без контейнерів.',
+        'quickstart.step1': 'Підняти PostgreSQL і застосувати міграцію:',
+        'quickstart.step2': 'Запустити scheduler:',
+        'quickstart.step3': 'Відкрити документацію: <a href="/docs/" style="color: var(--accent);">http://localhost:8080/docs/</a>',
+        'quickstart.step4': 'Запустити воркер (на машині з ffmpeg і доступом до файлів):',
+        'quickstart.step5': 'Створити job:',
+        'docker.title': 'Docker',
+        'docker.intro': 'Стек із трьох сервісів: PostgreSQL 16, scheduler (HTTP API) і worker (ffmpeg). Схему БД застосовується автоматично при першому старті postgres через <code>/docker-entrypoint-initdb.d/</code>.',
+        'docker.structure': 'Структура',
+        'docker.envVars': 'Змінні (.env)',
+        'docker.postgresUser': 'Користувач БД',
+        'docker.postgresPass': 'Пароль БД (змініть у prod)',
+        'docker.postgresDb': "Ім'я бази",
+        'docker.postgresPort': 'Порт postgres на хості',
+        'docker.schedulerPort': 'Порт scheduler на хості',
+        'docker.workerMaxJobs': 'Паралельні job на воркер',
+        'docker.workerGpu': 'GPU у воркера',
+        'docker.run': 'Запуск',
+        'docker.docsUrl': 'Документація API: <code>http://localhost:8080/docs/</code> (порт із <code>SCHEDULER_PORT</code>).',
+        'docker.scale': 'Масштабування воркерів',
+        'docker.scaleNote': 'Усі воркери ділять том <code>jobdata</code>, змонтований у <code>/data</code> — шляхи в job вказуйте відносно нього.',
+        'docker.example': 'Приклад job у Docker',
+        'docker.images': 'Образи',
+        'docker.col.service': 'Сервіс',
+        'docker.col.image': 'Образ',
+        'docker.col.notes': 'Особливості',
+        'docker.img.postgres': 'healthcheck, persistent volume, init SQL',
+        'docker.img.schedulerBuild': 'збірка <code>target: scheduler</code>',
+        'docker.img.scheduler': 'multi-stage Go, non-root, <code>/health</code>',
+        'docker.img.workerBuild': 'збірка <code>target: worker</code>',
+        'docker.img.worker': 'ffmpeg, том <code>/data</code>, drop privileges',
+        'docker.cleanup': 'Зупинка та очищення',
+        'structure.title': 'Структура проєкту',
+        'testing.title': 'Тести та CI',
+        'testing.intro': 'Unit-тести не потребують PostgreSQL: HTTP handlers використовують інтерфейс <code>api.JobStore</code> з mock-реалізацією. Integration-тести (build tag <code>integration</code>) підключаються <strong>лише</strong> до тестової БД через <code>TEST_DB_DSN</code> (ім\'я бази має закінчуватися на <code>_test</code>). Dev-база з <code>docker-compose.yml</code> (порт 5432) не використовується.',
+        'testing.local': 'Локальний запуск',
+        'testing.dsn': 'Тестовий PostgreSQL описано в <code>docker-compose.test.yml</code>: користувач/БД <code>video_test</code>, порт <code>5433</code>. DSN за замовчуванням: <code>postgres://video_test:video_test@127.0.0.1:5433/video_test?sslmode=disable</code>',
+        'testing.pyramid': 'Піраміда тестів',
+        'testing.col.layer': 'Шар',
+        'testing.col.package': 'Пакет',
+        'testing.col.checks': 'Що перевіряє',
+        'testing.ffmpeg': '<code>splitArgs</code>, <code>buildArgs</code>, перевірка шляхів in/out',
+        'testing.api': 'Валідація HTTP, коди відповідей (mock <code>JobStore</code>)',
+        'testing.worker': 'HTTP-клієнт scheduler (<code>httptest.Server</code>)',
+        'testing.store': 'Черга, SKIP LOCKED, lease, retry/failed, логи',
+        'testing.apiSmoke': 'Smoke: create → register → request-job → result → get/logs',
+        'testing.gha': 'Workflow <code>.github/workflows/ci.yml</code> запускається на pull request і push у <code>main</code>/<code>master</code>:',
+        'testing.gha.lint': '<strong>lint</strong> — <code>go vet</code>, <code>go mod verify</code>',
+        'testing.gha.unit': '<strong>unit-tests</strong> — <code>go test -short ./...</code>',
+        'testing.gha.build': '<strong>build</strong> — збірка всіх пакетів і бінарників <code>scheduler</code>, <code>worker</code>',
+        'testing.gha.integration': '<strong>integration-tests</strong> — PostgreSQL 16 (service container), <code>go test -p 1 -tags=integration</code> (один пакет за раз — спільна БД)',
+        'limitations.title': 'Обмеження та TODO',
+        'limitations.reaper': 'Фоновий reaper для DEAD воркерів і прострочених lease',
+        'limitations.migrator': 'Автоматичний мігратор для локального запуску (у Docker init SQL застосовується при першому старті postgres)',
+        'limitations.atLeastOnce': 'At-least-once семантика — можливі дубльовані запуски ffmpeg',
+        'limitations.logs': 'Логи зберігаються в PostgreSQL — не оптимально для дуже великих обсягів',
+        'limitations.gpu': 'Фільтрація job за GPU/CPU поки не використовується при видачі',
+        'footer': 'Документація проєкту go_distributed_system · оновлюйте <code>web/docs/index.html</code> при зміні API, схеми БД або архітектури.'
+      }
+    };
+
+    const LANG_KEY = 'docs-lang';
+
+    function detectLang() {
+      const saved = localStorage.getItem(LANG_KEY);
+      if (saved && I18N[saved]) return saved;
+      const nav = (navigator.language || 'en').toLowerCase();
+      if (nav.startsWith('uk')) return 'ua';
+      if (nav.startsWith('ru')) return 'ru';
+      return 'en';
+    }
+
+    function applyLang(lang) {
+      const dict = I18N[lang] || I18N.en;
+      document.documentElement.lang = lang === 'ua' ? 'uk' : lang;
+      document.title = dict['page.title'] || document.title;
+      document.querySelectorAll('[data-i18n]').forEach(el => {
+        const key = el.getAttribute('data-i18n');
+        if (dict[key]) el.innerHTML = dict[key];
+      });
+      document.querySelectorAll('.lang-switch button').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.lang === lang);
+      });
+      localStorage.setItem(LANG_KEY, lang);
+    }
+
+    document.querySelectorAll('.lang-switch button').forEach(btn => {
+      btn.addEventListener('click', () => applyLang(btn.dataset.lang));
+    });
+
+    applyLang(detectLang());
+
     const links = document.querySelectorAll('nav a');
     const sections = [...links].map(a => document.querySelector(a.getAttribute('href')));
 

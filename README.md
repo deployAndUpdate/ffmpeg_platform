@@ -1,56 +1,86 @@
 # Distributed Video Compression Platform (Go)
 
-Набросок MVP отказоустойчивого планировщика и воркеров для запуска `ffmpeg` на нескольких узлах. UI отсутствует, только HTTP API (Scheduler) и CLI/воркеры.
+Fault-tolerant scheduler and workers for running `ffmpeg` across multiple nodes. No UI — only an HTTP API (scheduler) and CLI workers.
 
-## Архитектура (логика)
-- Scheduler (HTTP API): принимает и выдает задания, отслеживает heartbeat воркеров, перевывает зависшие задания.
-- Workers: регистрируются, шлют heartbeat, запрашивают job, запускают `ffmpeg`, отправляют логи и результат.
-- PostgreSQL: единственный источник истины (jobs, workers, job_logs, lease TTL).
-- Очередь: `SELECT ... FOR UPDATE SKIP LOCKED` для выдачи job без внешнего брокера.
+## Quick start
 
-## Состояния Job
+**Docker (recommended):**
+
+```bash
+cp .env.example .env
+docker compose up --build -d
 ```
-NEW → QUEUED → RUNNING → COMPLETED
+
+Documentation: [http://localhost:8080/docs/](http://localhost:8080/docs/) (EN / UA / RU)
+
+**Local (without containers):**
+
+1. Start PostgreSQL and apply the migration: `psql "$DB_DSN" -f db/migrations/001_init.sql`
+2. Start the scheduler: `export DB_DSN=...; export SCHEDULER_ADDR=:8080; go run ./cmd/scheduler`
+3. Start a worker (machine with ffmpeg and file access): `export SCHEDULER_URL=http://localhost:8080; go run ./cmd/worker`
+
+## Architecture
+
+- **Scheduler** (`cmd/scheduler`) — HTTP API: create jobs, register workers, heartbeats, dispatch jobs (`SELECT … FOR UPDATE SKIP LOCKED` + lease), finalize results.
+- **Workers** (`cmd/worker`) — register, send heartbeats, poll for jobs, run ffmpeg, upload logs and results.
+- **PostgreSQL** — single source of truth: `jobs`, `workers`, `job_logs`, lease TTL.
+
+## Job lifecycle
+
+```
+QUEUED → RUNNING → COMPLETED
               ↓
-           FAILED → RETRY (если attempt < max_attempts)
+           FAILED → RETRY (if attempt < max_attempts)
 ```
-Инварианты: RUNNING только на одном worker; COMPLETED финально; FAILED может уйти в RETRY при лимите попыток.
 
-## Основные таблицы
-- `workers`: ресурсы, статус (ACTIVE/DEAD), heartbeat.
-- `jobs`: вход/выход, ffmpeg_args, статус, попытки, lease_expires_at, assigned_worker_id.
-- `job_logs`: stdout/stderr с таймштампами.
+Invariants: a job is `RUNNING` on at most one worker; `COMPLETED` is final; `FAILED` may transition to `RETRY` while attempts remain.
 
-## API (минимальный контур)
-- `POST /jobs` — создать job.
-- `GET /jobs/{id}` — статус job.
-- `GET /jobs/{id}/logs` — логи.
-- `POST /workers/register` — регистрация воркера.
-- `POST /workers/heartbeat` — heartbeat.
-- `POST /workers/request-job` — выдача job (SKIP LOCKED + lease).
-- `POST /workers/job-result` — финализация job, запись результата и логов.
+## HTTP API (summary)
 
-## Компромиссы
-- At-least-once вместо exactly-once; возможны повторные выполнения.
-- Очередь в Postgres без отдельного брокера — проще для MVP, ограниченная пропускная способность.
-- Логи в БД — консистентно и просто, но тяжелее для больших потоков.
-- Простая модель ресурсов: пока `max_parallel_jobs`, CPU/GPU фильтры можно расширять позже.
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/health` | Health check |
+| POST | `/jobs` | Create a job |
+| GET | `/jobs/{id}` | Job status |
+| GET | `/jobs/{id}/logs` | stdout/stderr logs |
+| POST | `/workers/register` | Register or update a worker |
+| POST | `/workers/heartbeat` | Worker heartbeat |
+| POST | `/workers/request-job` | Acquire next job (SKIP LOCKED + lease) |
+| POST | `/workers/job-result` | Finalize job, store result and logs |
+| GET | `/docs/` | This documentation (embedded HTML) |
 
-## Известные проблемы / TODO
-- Хендлеры API пока заглушки (нет бизнес-логики и валидации).
-- Воркеры не реализованы; нет запуска `ffmpeg`.
-- Нет фонового reaper'а для DEAD воркеров и истекших lease.
-- Нет мигратора; sql-файл лежит в `db/migrations/001_init.sql`.
+Full request/response examples, env vars, Docker setup, and tests: see **[/docs/](http://localhost:8080/docs/)**.
 
-## Запуск
+## Trade-offs
 
-**Docker (рекомендуется):** см. раздел [Docker](http://localhost:8080/docs/#docker) в веб-документации или `docker compose up --build -d` после `cp .env.example .env`.
+- **At-least-once** instead of exactly-once — duplicate ffmpeg runs are possible on failure or lease expiry.
+- **Postgres queue** — no external broker; simpler MVP, limited throughput.
+- **Logs in DB** — consistent and simple, heavier for large streams.
+- **Resource model** — `max_parallel_jobs` today; CPU/GPU filters can be extended later.
 
-**Локально (набросок):**
-1. Поднять PostgreSQL, получить `DB_DSN`, применить миграцию из `db/migrations/001_init.sql`.
-2. `export DB_DSN=...; export SCHEDULER_ADDR=:8080`
-3. `go run ./cmd/scheduler`
-4. Запуск воркеров будет добавлен позже (`cmd/worker`).
+## Tests
 
+```bash
+make test              # unit tests (no PostgreSQL)
+make test-integration  # integration tests (docker-compose.test.yml, port 5433)
+make ci                # full local CI suite
+```
 
+## Known limitations
 
+- No background reaper for dead workers and expired leases
+- No standalone migration tool (Docker applies init SQL on first postgres start)
+- GPU/CPU filters are not used when dispatching jobs
+
+## Project layout
+
+```
+cmd/scheduler/   HTTP API server
+cmd/worker/      ffmpeg worker
+internal/api/    HTTP handlers
+internal/store/  PostgreSQL layer
+internal/worker/ worker client and loop
+internal/ffmpeg/ ffmpeg wrapper
+web/docs/        embedded HTML documentation
+db/migrations/   SQL schema
+```

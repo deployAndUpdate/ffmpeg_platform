@@ -1,0 +1,21 @@
+# Изолированный PostgreSQL только для integration-тестов (make test-integration).
+# Порт 5433 — не пересекается с dev postgres из docker-compose.yml (5432).
+name: go-distributed-system-test
+
+services:
+  postgres-test:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: video_test
+      POSTGRES_PASSWORD: video_test
+      POSTGRES_DB: video_test
+    ports:
+      - "5433:5432"
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U video_test -d video_test"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+      start_period: 5s
