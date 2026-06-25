@@ -26,7 +26,7 @@ type Config struct {
 func DefaultConfig() Config {
 	return Config{
 		Interval:      30 * time.Second,
-		WorkerTimeout: 45 * time.Second,
+		WorkerTimeout: 50 * time.Second,
 		Enabled:       true,
 	}
 }

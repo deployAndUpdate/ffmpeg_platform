@@ -15,6 +15,7 @@ import (
 	"go_distributed_system/internal/store"
 	"go_distributed_system/internal/storage"
 	"go_distributed_system/internal/types"
+	webadmin "go_distributed_system/web/admin"
 	webdocs "go_distributed_system/web/docs"
 
 	"github.com/google/uuid"
@@ -71,9 +72,26 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/workers/register", s.handleWorkerRegister)
 	s.mux.HandleFunc("/workers/heartbeat", s.handleWorkerHeartbeat)
 	s.mux.HandleFunc("/workers/request-job", s.handleWorkerRequestJob)
+	s.mux.HandleFunc("/workers/renew-lease", s.handleWorkerRenewLease)
 	s.mux.HandleFunc("/workers/job-result", s.handleWorkerJobResult)
 
+	s.mux.HandleFunc("/admin/api/", s.handleAdmin)
+
 	s.registerDocsRoutes()
+	s.registerAdminRoutes()
+}
+
+func (s *Server) registerAdminRoutes() {
+	sub, err := fs.Sub(webadmin.FS, ".")
+	if err != nil {
+		log.Printf("admin fs: %v", err)
+		return
+	}
+	fileServer := http.FileServer(http.FS(sub))
+	s.mux.Handle("/admin/", http.StripPrefix("/admin/", fileServer))
+	s.mux.HandleFunc("/admin", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/admin/", http.StatusMovedPermanently)
+	})
 }
 
 func (s *Server) registerDocsRoutes() {
@@ -161,6 +179,14 @@ func (s *Server) handleWorkerRequestJob(w http.ResponseWriter, r *http.Request) 
 	s.workerRequestJob(w, r)
 }
 
+func (s *Server) handleWorkerRenewLease(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	s.workerRenewLease(w, r)
+}
+
 func (s *Server) handleWorkerJobResult(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -183,11 +209,12 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	type req struct {
-		InputPath   string `json:"input_path"`
-		OutputPath  string `json:"output_path"`
-		Preset      string `json:"preset"`
-		FFmpegArgs  string `json:"ffmpeg_args"`
-		MaxAttempts int    `json:"max_attempts"`
+		InputPath          string `json:"input_path"`
+		OutputPath         string `json:"output_path"`
+		Preset             string `json:"preset"`
+		FFmpegArgs         string `json:"ffmpeg_args"`
+		MaxAttempts        int    `json:"max_attempts"`
+		MaxDurationSeconds int    `json:"max_duration_seconds"`
 	}
 	var body req
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -208,21 +235,37 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 		body.MaxAttempts = 3
 	}
 
-	id := uuid.New().String()
-	job := &types.Job{
-		ID:          id,
-		InputPath:   body.InputPath,
-		OutputPath:  body.OutputPath,
-		Preset:      spec.Preset,
-		FFmpegArgs:  spec.FFmpegArgs,
-		Storage:     types.StorageLocal,
-		Status:      types.JobStatusQueued,
-		Attempt:     0,
-		MaxAttempts: body.MaxAttempts,
-	}
-
+	idempotencyKey := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
+	if idempotencyKey != "" {
+		existing, err := s.store.GetJobByIdempotencyKey(ctx, idempotencyKey)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			log.Printf("get job by idempotency key: %v", err)
+			http.Error(w, "failed to create job", http.StatusInternalServerError)
+			return
+		}
+		if existing != nil {
+			writeJSON(w, http.StatusOK, existing)
+			return
+		}
+	}
+
+	id := uuid.New().String()
+	job := &types.Job{
+		ID:                 id,
+		InputPath:          body.InputPath,
+		OutputPath:         body.OutputPath,
+		Preset:             spec.Preset,
+		FFmpegArgs:         spec.FFmpegArgs,
+		Storage:            types.StorageLocal,
+		Status:             types.JobStatusQueued,
+		Attempt:            0,
+		MaxAttempts:        body.MaxAttempts,
+		IdempotencyKey:     idempotencyKey,
+		MaxDurationSeconds: resolveMaxDurationSeconds(body.MaxDurationSeconds, spec.Preset),
+	}
+
 	if err := s.store.CreateJob(ctx, job); err != nil {
 		log.Printf("create job: %v", err)
 		http.Error(w, "failed to create job", http.StatusInternalServerError)
@@ -348,8 +391,6 @@ func (s *Server) workerHeartbeat(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
-const defaultJobLease = 30 * time.Minute
-
 func (s *Server) workerRequestJob(w http.ResponseWriter, r *http.Request) {
 	type req struct {
 		WorkerID string `json:"worker_id"`
@@ -367,7 +408,7 @@ func (s *Server) workerRequestJob(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
-	job, err := s.store.AcquireJob(ctx, body.WorkerID, defaultJobLease)
+	job, err := s.store.AcquireJob(ctx, body.WorkerID, JobLeaseFromEnv())
 	if err != nil {
 		log.Printf("acquire job: %v", err)
 		http.Error(w, "failed to acquire job", http.StatusInternalServerError)
@@ -376,27 +417,60 @@ func (s *Server) workerRequestJob(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"job": job})
 }
 
-func (s *Server) workerJobResult(w http.ResponseWriter, r *http.Request) {
+func (s *Server) workerRenewLease(w http.ResponseWriter, r *http.Request) {
 	type req struct {
-		WorkerID string              `json:"worker_id"`
-		JobID    string              `json:"job_id"`
-		Success  bool                `json:"success"`
-		Logs     []types.JobLogEntry `json:"logs"`
+		WorkerID         string `json:"worker_id"`
+		JobID            string `json:"job_id"`
+		LeaseGeneration  int64  `json:"lease_generation"`
 	}
 	var body req
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "invalid json", http.StatusBadRequest)
 		return
 	}
-	if body.WorkerID == "" || body.JobID == "" {
-		http.Error(w, "worker_id and job_id are required", http.StatusBadRequest)
+	if body.WorkerID == "" || body.JobID == "" || body.LeaseGeneration <= 0 {
+		http.Error(w, "worker_id, job_id and lease_generation are required", http.StatusBadRequest)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	job, err := s.store.RenewLease(ctx, body.JobID, body.WorkerID, body.LeaseGeneration, JobLeaseFromEnv())
+	if err != nil {
+		if errors.Is(err, store.ErrLeaseLost) {
+			http.Error(w, "lease lost or generation mismatch", http.StatusConflict)
+			return
+		}
+		log.Printf("renew lease: %v", err)
+		http.Error(w, "failed to renew lease", http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"job": job})
+}
+
+func (s *Server) workerJobResult(w http.ResponseWriter, r *http.Request) {
+	type req struct {
+		WorkerID         string              `json:"worker_id"`
+		JobID            string              `json:"job_id"`
+		LeaseGeneration  int64               `json:"lease_generation"`
+		Success          bool                `json:"success"`
+		Logs             []types.JobLogEntry `json:"logs"`
+	}
+	var body req
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "invalid json", http.StatusBadRequest)
+		return
+	}
+	if body.WorkerID == "" || body.JobID == "" || body.LeaseGeneration <= 0 {
+		http.Error(w, "worker_id, job_id and lease_generation are required", http.StatusBadRequest)
 		return
 	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
 
-	if err := s.store.FinishJob(ctx, body.JobID, body.WorkerID, body.Success, body.Logs); err != nil {
+	if err := s.store.FinishJob(ctx, body.JobID, body.WorkerID, body.LeaseGeneration, body.Success, body.Logs); err != nil {
 		if errors.Is(err, store.ErrJobNotAssigned) {
 			http.Error(w, "job not assigned to worker or not running", http.StatusConflict)
 			return

@@ -10,8 +10,21 @@ import (
 )
 
 type transcodeSpec struct {
-	Preset     string
-	FFmpegArgs string
+	Preset             string
+	FFmpegArgs         string
+	MaxDurationSeconds int
+}
+
+func resolveMaxDurationSeconds(requestSeconds int, preset string) int {
+	if requestSeconds > 0 {
+		return requestSeconds
+	}
+	if preset != "" {
+		if sec := presets.MaxDurationSeconds(preset); sec > 0 {
+			return sec
+		}
+	}
+	return int(JobMaxDurationFromEnv().Seconds())
 }
 
 func resolveTranscodeSpec(preset, ffmpegArgs, outputExt string) (transcodeSpec, error) {
@@ -36,10 +49,17 @@ func resolveTranscodeSpec(preset, ffmpegArgs, outputExt string) (transcodeSpec, 
 				return transcodeSpec{}, err
 			}
 		}
-		return transcodeSpec{Preset: preset, FFmpegArgs: p.FFmpegArgs}, nil
+		return transcodeSpec{
+			Preset:             preset,
+			FFmpegArgs:         p.FFmpegArgs,
+			MaxDurationSeconds: resolveMaxDurationSeconds(0, preset),
+		}, nil
 	}
 
-	return transcodeSpec{FFmpegArgs: ffmpegArgs}, nil
+	return transcodeSpec{
+		FFmpegArgs:         ffmpegArgs,
+		MaxDurationSeconds: int(JobMaxDurationFromEnv().Seconds()),
+	}, nil
 }
 
 func outputExtFromPath(path string) string {

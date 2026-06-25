@@ -195,15 +195,16 @@ func TestFinishJobCompleted(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.AcquireJob(ctx, workerID, time.Minute); err != nil {
-		t.Fatal(err)
+	acquired, err := st.AcquireJob(ctx, workerID, time.Minute)
+	if err != nil || acquired == nil {
+		t.Fatalf("acquire: job=%v err=%v", acquired, err)
 	}
 
 	logs := []types.JobLogEntry{
 		{Stream: "stdout", Line: "frame=100"},
 		{Stream: "stderr", Line: "warning"},
 	}
-	if err := st.FinishJob(ctx, jobID, workerID, true, logs); err != nil {
+	if err := st.FinishJob(ctx, jobID, workerID, acquired.LeaseGeneration, true, logs); err != nil {
 		t.Fatal(err)
 	}
 
@@ -248,7 +249,7 @@ func TestFinishJobRetryAndFailed(t *testing.T) {
 	if err != nil || acquired == nil {
 		t.Fatalf("acquire: job=%v err=%v", acquired, err)
 	}
-	if err := st.FinishJob(ctx, jobID, workerID, false, nil); err != nil {
+	if err := st.FinishJob(ctx, jobID, workerID, acquired.LeaseGeneration, false, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -264,7 +265,7 @@ func TestFinishJobRetryAndFailed(t *testing.T) {
 	if err != nil || acquired == nil {
 		t.Fatalf("re-acquire: job=%v err=%v", acquired, err)
 	}
-	if err := st.FinishJob(ctx, jobID, workerID, false, nil); err != nil {
+	if err := st.FinishJob(ctx, jobID, workerID, acquired.LeaseGeneration, false, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -298,7 +299,7 @@ func TestFinishJobWrongWorker(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err := st.FinishJob(ctx, jobID, otherWorker, true, nil)
+	err := st.FinishJob(ctx, jobID, otherWorker, 1, true, nil)
 	if !errors.Is(err, store.ErrJobNotAssigned) {
 		t.Fatalf("err = %v, want ErrJobNotAssigned", err)
 	}

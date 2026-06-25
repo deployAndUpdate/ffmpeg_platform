@@ -18,14 +18,20 @@ import (
 )
 
 type mockStore struct {
-	createJobFn     func(ctx context.Context, job *types.Job) error
-	queueJobFn      func(ctx context.Context, jobID string) error
-	getJobFn        func(ctx context.Context, id string) (*types.Job, error)
-	getJobLogsFn    func(ctx context.Context, jobID string) ([]types.JobLog, error)
-	registerWorkerFn func(ctx context.Context, w *types.Worker) error
-	heartbeatFn     func(ctx context.Context, workerID string, ts time.Time) error
-	acquireJobFn    func(ctx context.Context, workerID string, lease time.Duration) (*types.Job, error)
-	finishJobFn     func(ctx context.Context, jobID, workerID string, success bool, logs []types.JobLogEntry) error
+	createJobFn            func(ctx context.Context, job *types.Job) error
+	queueJobFn             func(ctx context.Context, jobID string) error
+	getJobFn               func(ctx context.Context, id string) (*types.Job, error)
+	getJobByIdempotencyFn  func(ctx context.Context, key string) (*types.Job, error)
+	getJobLogsFn           func(ctx context.Context, jobID string) ([]types.JobLog, error)
+	registerWorkerFn       func(ctx context.Context, w *types.Worker) error
+	heartbeatFn            func(ctx context.Context, workerID string, ts time.Time) error
+	acquireJobFn           func(ctx context.Context, workerID string, lease time.Duration) (*types.Job, error)
+	renewLeaseFn           func(ctx context.Context, jobID, workerID string, leaseGeneration int64, lease time.Duration) (*types.Job, error)
+	finishJobFn            func(ctx context.Context, jobID, workerID string, leaseGeneration int64, success bool, logs []types.JobLogEntry) error
+	listJobsFn             func(ctx context.Context, filter store.ListJobsFilter) (store.ListJobsResult, error)
+	listWorkersFn          func(ctx context.Context) ([]types.WorkerStats, error)
+	getWorkerFn            func(ctx context.Context, id string) (*types.WorkerStats, error)
+	getAdminStatsFn        func(ctx context.Context) (store.AdminStats, error)
 }
 
 func (m *mockStore) CreateJob(ctx context.Context, job *types.Job) error {
@@ -77,11 +83,53 @@ func (m *mockStore) AcquireJob(ctx context.Context, workerID string, lease time.
 	return nil, nil
 }
 
-func (m *mockStore) FinishJob(ctx context.Context, jobID, workerID string, success bool, logs []types.JobLogEntry) error {
+func (m *mockStore) GetJobByIdempotencyKey(ctx context.Context, key string) (*types.Job, error) {
+	if m.getJobByIdempotencyFn != nil {
+		return m.getJobByIdempotencyFn(ctx, key)
+	}
+	return nil, sql.ErrNoRows
+}
+
+func (m *mockStore) RenewLease(ctx context.Context, jobID, workerID string, leaseGeneration int64, lease time.Duration) (*types.Job, error) {
+	if m.renewLeaseFn != nil {
+		return m.renewLeaseFn(ctx, jobID, workerID, leaseGeneration, lease)
+	}
+	return nil, store.ErrLeaseLost
+}
+
+func (m *mockStore) FinishJob(ctx context.Context, jobID, workerID string, leaseGeneration int64, success bool, logs []types.JobLogEntry) error {
 	if m.finishJobFn != nil {
-		return m.finishJobFn(ctx, jobID, workerID, success, logs)
+		return m.finishJobFn(ctx, jobID, workerID, leaseGeneration, success, logs)
 	}
 	return nil
+}
+
+func (m *mockStore) ListJobs(ctx context.Context, filter store.ListJobsFilter) (store.ListJobsResult, error) {
+	if m.listJobsFn != nil {
+		return m.listJobsFn(ctx, filter)
+	}
+	return store.ListJobsResult{}, nil
+}
+
+func (m *mockStore) ListWorkers(ctx context.Context) ([]types.WorkerStats, error) {
+	if m.listWorkersFn != nil {
+		return m.listWorkersFn(ctx)
+	}
+	return nil, nil
+}
+
+func (m *mockStore) GetWorker(ctx context.Context, id string) (*types.WorkerStats, error) {
+	if m.getWorkerFn != nil {
+		return m.getWorkerFn(ctx, id)
+	}
+	return nil, sql.ErrNoRows
+}
+
+func (m *mockStore) GetAdminStats(ctx context.Context) (store.AdminStats, error) {
+	if m.getAdminStatsFn != nil {
+		return m.getAdminStatsFn(ctx)
+	}
+	return store.AdminStats{JobsByStatus: map[string]int{}}, nil
 }
 
 func newTestServer(st JobStore) *httptest.Server {
@@ -322,7 +370,7 @@ func TestWorkerRequestJobValidation(t *testing.T) {
 
 func TestWorkerJobResultConflict(t *testing.T) {
 	st := &mockStore{
-		finishJobFn: func(context.Context, string, string, bool, []types.JobLogEntry) error {
+		finishJobFn: func(context.Context, string, string, int64, bool, []types.JobLogEntry) error {
 			return store.ErrJobNotAssigned
 		},
 	}
@@ -330,9 +378,10 @@ func TestWorkerJobResultConflict(t *testing.T) {
 	defer srv.Close()
 
 	resp := jsonPost(t, srv.URL+"/workers/job-result", map[string]any{
-		"worker_id": "00000000-0000-0000-0000-000000000001",
-		"job_id":    "00000000-0000-0000-0000-000000000002",
-		"success":   true,
+		"worker_id":         "00000000-0000-0000-0000-000000000001",
+		"job_id":            "00000000-0000-0000-0000-000000000002",
+		"lease_generation":  1,
+		"success":           true,
 	})
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusConflict {
@@ -342,7 +391,7 @@ func TestWorkerJobResultConflict(t *testing.T) {
 
 func TestWorkerJobResultStoreError(t *testing.T) {
 	st := &mockStore{
-		finishJobFn: func(context.Context, string, string, bool, []types.JobLogEntry) error {
+		finishJobFn: func(context.Context, string, string, int64, bool, []types.JobLogEntry) error {
 			return errors.New("db down")
 		},
 	}
@@ -350,9 +399,10 @@ func TestWorkerJobResultStoreError(t *testing.T) {
 	defer srv.Close()
 
 	resp := jsonPost(t, srv.URL+"/workers/job-result", map[string]any{
-		"worker_id": "00000000-0000-0000-0000-000000000001",
-		"job_id":    "00000000-0000-0000-0000-000000000002",
-		"success":   false,
+		"worker_id":         "00000000-0000-0000-0000-000000000001",
+		"job_id":            "00000000-0000-0000-0000-000000000002",
+		"lease_generation":  1,
+		"success":           false,
 	})
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusInternalServerError {

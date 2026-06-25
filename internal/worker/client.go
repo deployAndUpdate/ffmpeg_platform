@@ -57,12 +57,25 @@ func (c *Client) RequestJob(ctx context.Context, workerID string) (*types.Job, e
 	return resp.Job, nil
 }
 
-func (c *Client) SubmitJobResult(ctx context.Context, workerID, jobID string, success bool, logs []types.JobLogEntry) error {
+func (c *Client) RenewLease(ctx context.Context, workerID, jobID string, leaseGeneration int64) error {
 	body := map[string]any{
-		"worker_id": workerID,
-		"job_id":    jobID,
-		"success":   success,
-		"logs":      logs,
+		"worker_id":         workerID,
+		"job_id":            jobID,
+		"lease_generation":  leaseGeneration,
+	}
+	var resp struct {
+		Job *types.Job `json:"job"`
+	}
+	return c.post(ctx, "/workers/renew-lease", body, &resp)
+}
+
+func (c *Client) SubmitJobResult(ctx context.Context, workerID, jobID string, leaseGeneration int64, success bool, logs []types.JobLogEntry) error {
+	body := map[string]any{
+		"worker_id":         workerID,
+		"job_id":            jobID,
+		"lease_generation":  leaseGeneration,
+		"success":           success,
+		"logs":              logs,
 	}
 	var out map[string]string
 	return c.post(ctx, "/workers/job-result", body, &out)

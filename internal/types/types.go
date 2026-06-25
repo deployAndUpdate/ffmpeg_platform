@@ -42,9 +42,12 @@ type Job struct {
 	Storage          StorageMode `json:"storage"`
 	Status           JobStatus   `json:"status"`
 	AssignedWorkerID *string    `json:"assigned_worker_id,omitempty"`
-	Attempt          int        `json:"attempt"`
-	MaxAttempts      int        `json:"max_attempts"`
-	LeaseExpiresAt   *time.Time `json:"lease_expires_at,omitempty"`
+	Attempt            int        `json:"attempt"`
+	MaxAttempts        int        `json:"max_attempts"`
+	LeaseExpiresAt     *time.Time `json:"lease_expires_at,omitempty"`
+	LeaseGeneration    int64      `json:"lease_generation"`
+	IdempotencyKey     string     `json:"idempotency_key,omitempty"`
+	MaxDurationSeconds int        `json:"max_duration_seconds,omitempty"`
 	CreatedAt        time.Time  `json:"created_at"`
 	StartedAt        *time.Time `json:"started_at,omitempty"`
 	FinishedAt       *time.Time `json:"finished_at,omitempty"`
@@ -76,4 +79,10 @@ type JobLog struct {
 	TS     time.Time `json:"ts"`
 	Stream string    `json:"stream"`
 	Line   string    `json:"line"`
+}
+
+// WorkerStats extends Worker with live workload counters for the admin dashboard.
+type WorkerStats struct {
+	Worker
+	RunningJobs int `json:"running_jobs"`
 }

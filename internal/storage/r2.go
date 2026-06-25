@@ -102,17 +102,32 @@ func (r *R2) PresignGet(ctx context.Context, key string, expiry time.Duration) (
 }
 
 func (r *R2) Exists(ctx context.Context, key string) (bool, error) {
-	_, err := r.client.HeadObject(ctx, &s3.HeadObjectInput{
+	stat, err := r.StatObject(ctx, key)
+	if err != nil {
+		if isNotFound(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	return stat.Size > 0, nil
+}
+
+func (r *R2) StatObject(ctx context.Context, key string) (ObjectStat, error) {
+	out, err := r.client.HeadObject(ctx, &s3.HeadObjectInput{
 		Bucket: aws.String(r.bucket),
 		Key:    aws.String(key),
 	})
 	if err != nil {
 		if isNotFound(err) {
-			return false, nil
+			return ObjectStat{}, fmt.Errorf("not found: %w", err)
 		}
-		return false, fmt.Errorf("head object %q: %w", key, err)
+		return ObjectStat{}, fmt.Errorf("head object %q: %w", key, err)
 	}
-	return true, nil
+	size := int64(0)
+	if out.ContentLength != nil {
+		size = *out.ContentLength
+	}
+	return ObjectStat{Size: size}, nil
 }
 
 func (r *R2) Download(ctx context.Context, key, localPath string) error {

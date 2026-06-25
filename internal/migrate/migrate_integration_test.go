@@ -28,6 +28,7 @@ func TestMigrateUpStatusAndDown(t *testing.T) {
 	assertTableExists(t, dsn, "jobs")
 	assertColumnExists(t, dsn, "jobs", "storage")
 	assertColumnExists(t, dsn, "jobs", "preset")
+	assertColumnExists(t, dsn, "jobs", "lease_generation")
 
 	mg, err := migrate.New(dsn)
 	if err != nil {
@@ -39,8 +40,8 @@ func TestMigrateUpStatusAndDown(t *testing.T) {
 	if err != nil {
 		t.Fatalf("status: %v", err)
 	}
-	if st.Version != 3 {
-		t.Fatalf("version = %d, want 3", st.Version)
+	if st.Version != 4 {
+		t.Fatalf("version = %d, want 4", st.Version)
 	}
 	if st.Dirty {
 		t.Fatal("expected clean migration state")
@@ -53,18 +54,31 @@ func TestMigrateUpStatusAndDown(t *testing.T) {
 	if err := mg.Down(1); err != nil {
 		t.Fatalf("down 1: %v", err)
 	}
-	assertColumnMissing(t, dsn, "jobs", "preset")
+	assertColumnMissing(t, dsn, "jobs", "lease_generation")
 
 	st, err = mg.Status()
 	if err != nil {
 		t.Fatalf("status after down: %v", err)
+	}
+	if st.Version != 3 {
+		t.Fatalf("version = %d, want 3", st.Version)
+	}
+
+	if err := mg.Down(1); err != nil {
+		t.Fatalf("down 2: %v", err)
+	}
+	assertColumnMissing(t, dsn, "jobs", "preset")
+
+	st, err = mg.Status()
+	if err != nil {
+		t.Fatalf("status after second down: %v", err)
 	}
 	if st.Version != 2 {
 		t.Fatalf("version = %d, want 2", st.Version)
 	}
 
 	if err := mg.Down(2); err != nil {
-		t.Fatalf("down 2: %v", err)
+		t.Fatalf("down 3+4: %v", err)
 	}
 	assertTableMissing(t, dsn, "jobs")
 
@@ -96,6 +110,7 @@ func TestMigrateLegacyInitSchemaBaseline(t *testing.T) {
 
 	assertColumnExists(t, dsn, "jobs", "storage")
 	assertColumnExists(t, dsn, "jobs", "preset")
+	assertColumnExists(t, dsn, "jobs", "lease_generation")
 
 	mg, err := migrate.New(dsn)
 	if err != nil {
@@ -107,8 +122,8 @@ func TestMigrateLegacyInitSchemaBaseline(t *testing.T) {
 	if err != nil {
 		t.Fatalf("status: %v", err)
 	}
-	if st.Version != 3 || st.Dirty {
-		t.Fatalf("status = version %d dirty %t, want 3 false", st.Version, st.Dirty)
+	if st.Version != 4 || st.Dirty {
+		t.Fatalf("status = version %d dirty %t, want 4 false", st.Version, st.Dirty)
 	}
 }
 

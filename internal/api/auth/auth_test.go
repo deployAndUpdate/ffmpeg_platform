@@ -49,7 +49,7 @@ func TestMiddlewarePublicPaths(t *testing.T) {
 		WorkerKey: "worker",
 	}, next)
 
-	for _, path := range []string{"/health", "/docs", "/docs/index.html"} {
+	for _, path := range []string{"/health", "/docs", "/docs/index.html", "/admin/", "/admin"} {
 		hit = false
 		req := httptest.NewRequest(http.MethodGet, path, nil)
 		rec := httptest.NewRecorder()
@@ -83,6 +83,8 @@ func TestMiddlewareClientAndWorkerRoles(t *testing.T) {
 		{"client rejected on workers", "/workers/register", "client-key", http.StatusForbidden},
 		{"admin on jobs", "/jobs/1", "admin-key", http.StatusOK},
 		{"admin on workers", "/workers/heartbeat", "admin-key", http.StatusOK},
+		{"admin on admin api", "/admin/api/stats", "admin-key", http.StatusOK},
+		{"client rejected on admin api", "/admin/api/stats", "client-key", http.StatusForbidden},
 		{"missing key", "/jobs", "", http.StatusUnauthorized},
 		{"invalid key", "/jobs", "wrong", http.StatusUnauthorized},
 	}

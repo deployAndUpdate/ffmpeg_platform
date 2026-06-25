@@ -34,7 +34,8 @@ func (s *Server) initR2Job(w http.ResponseWriter, r *http.Request) {
 		FFmpegArgs    string `json:"ffmpeg_args"`
 		InputFilename string `json:"input_filename"`
 		OutputExt     string `json:"output_ext"`
-		MaxAttempts   int    `json:"max_attempts"`
+		MaxAttempts        int    `json:"max_attempts"`
+		MaxDurationSeconds int    `json:"max_duration_seconds"`
 	}
 	var body req
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -79,15 +80,16 @@ func (s *Server) initR2Job(w http.ResponseWriter, r *http.Request) {
 	uploadExpires := time.Now().UTC().Add(s.uploadPresignTTL())
 
 	job := &types.Job{
-		ID:          id,
-		InputPath:   inputKey,
-		OutputPath:  outputKey,
-		Preset:      spec.Preset,
-		FFmpegArgs:  spec.FFmpegArgs,
-		Storage:     types.StorageR2,
-		Status:      types.JobStatusNew,
-		Attempt:     0,
-		MaxAttempts: body.MaxAttempts,
+		ID:                 id,
+		InputPath:          inputKey,
+		OutputPath:         outputKey,
+		Preset:             spec.Preset,
+		FFmpegArgs:         spec.FFmpegArgs,
+		Storage:            types.StorageR2,
+		Status:             types.JobStatusNew,
+		Attempt:            0,
+		MaxAttempts:        body.MaxAttempts,
+		MaxDurationSeconds: resolveMaxDurationSeconds(body.MaxDurationSeconds, spec.Preset),
 	}
 	if err := s.store.CreateJob(ctx, job); err != nil {
 		log.Printf("create r2 job: %v", err)
@@ -174,6 +176,8 @@ func (s *Server) jobResponse(ctx context.Context, job *types.Job) map[string]any
 		"attempt":            job.Attempt,
 		"max_attempts":       job.MaxAttempts,
 		"lease_expires_at":   job.LeaseExpiresAt,
+		"lease_generation":   job.LeaseGeneration,
+		"max_duration_seconds": job.MaxDurationSeconds,
 		"created_at":         job.CreatedAt,
 		"started_at":         job.StartedAt,
 		"finished_at":        job.FinishedAt,

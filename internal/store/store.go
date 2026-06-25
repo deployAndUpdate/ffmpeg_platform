@@ -50,8 +50,9 @@ func (s *Store) CreateJob(ctx context.Context, job *types.Job) error {
 		job.Storage = types.StorageLocal
 	}
 	const q = `
-INSERT INTO jobs (id, input_path, output_path, preset, ffmpeg_args, storage, status, attempt, max_attempts, created_at, updated_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW())`
+INSERT INTO jobs (id, input_path, output_path, preset, ffmpeg_args, storage, status, attempt, max_attempts,
+                  idempotency_key, max_duration_seconds, created_at, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW())`
 	_, err := s.db.ExecContext(ctx, q,
 		job.ID,
 		job.InputPath,
@@ -62,6 +63,8 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW())`
 		job.Status,
 		job.Attempt,
 		job.MaxAttempts,
+		nullString(job.IdempotencyKey),
+		job.MaxDurationSeconds,
 	)
 	return err
 }
@@ -88,11 +91,7 @@ WHERE id = $1 AND status = 'NEW'`
 
 // GetJob returns a job by ID.
 func (s *Store) GetJob(ctx context.Context, id string) (*types.Job, error) {
-	const q = `
-SELECT id, input_path, output_path, preset, ffmpeg_args, storage, status, assigned_worker_id,
-       attempt, max_attempts, lease_expires_at, created_at, started_at, finished_at, updated_at
-FROM jobs
-WHERE id = $1`
+	const q = `SELECT ` + jobSelectColumns + ` FROM jobs WHERE id = $1`
 	return scanJob(s.db.QueryRowContext(ctx, q, id))
 }
 

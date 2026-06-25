@@ -126,7 +126,7 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.Interval != 30*time.Second {
 		t.Fatalf("interval = %v", cfg.Interval)
 	}
-	if cfg.WorkerTimeout != 45*time.Second {
+	if cfg.WorkerTimeout != 50*time.Second {
 		t.Fatalf("worker timeout = %v", cfg.WorkerTimeout)
 	}
 	if !cfg.Enabled {
