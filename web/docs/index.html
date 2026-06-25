@@ -314,6 +314,7 @@
       <li><a href="#job-lifecycle" data-i18n="nav.jobLifecycle">Жизненный цикл Job</a></li>
       <li><a href="#database" data-i18n="nav.database">База данных</a></li>
       <li><a href="#api" data-i18n="nav.api">HTTP API</a></li>
+      <li><a href="#admin" data-i18n="nav.admin">Admin Dashboard</a></li>
       <li><a href="#env" data-i18n="nav.env">Переменные окружения</a></li>
       <li><a href="#quickstart" data-i18n="nav.quickstart">Быстрый старт</a></li>
       <li><a href="#docker" data-i18n="nav.docker">Docker</a></li>
@@ -506,10 +507,10 @@
         <tbody>
           <tr><td data-i18n="api.auth.client">Client</td><td><code>SCHEDULER_CLIENT_API_KEY</code></td><td><code>/jobs*</code>, <code>/presets</code></td></tr>
           <tr><td data-i18n="api.auth.worker">Worker</td><td><code>SCHEDULER_WORKER_API_KEY</code></td><td><code>/workers/*</code></td></tr>
-          <tr><td data-i18n="api.auth.admin">Admin</td><td><code>SCHEDULER_ADMIN_API_KEY</code></td><td data-i18n="api.auth.adminRoutes">Все защищённые маршруты</td></tr>
+          <tr><td data-i18n="api.auth.admin">Admin</td><td><code>SCHEDULER_ADMIN_API_KEY</code></td><td data-i18n="api.auth.adminRoutes"><code>/admin/api/*</code> и все защищённые маршруты</td></tr>
         </tbody>
       </table>
-      <p data-i18n="api.auth.public">Без ключа: <code>GET /health</code>, <code>GET /docs/</code>.</p>
+      <p data-i18n="api.auth.public">Без ключа: <code>GET /health</code>, <code>GET /docs/</code>, <code>GET /admin/</code> (UI; API dashboard требует admin-ключ).</p>
       <p data-i18n="api.auth.errors"><code>401</code> — ключ отсутствует или неверный; <code>403</code> — ключ верный, но роль не подходит для маршрута.</p>
       <pre><code>curl -s -X POST http://localhost:8080/jobs \
   -H "Authorization: Bearer $SCHEDULER_CLIENT_API_KEY" \
@@ -689,6 +690,33 @@ curl -s "http://localhost:8080/jobs/$JOB_ID" | jq '.download_url'</code></pre>
   ]
 }</code></pre>
 
+      <h3 data-i18n="api.admin.title">Admin API</h3>
+      <p data-i18n="api.admin.intro">Read-only endpoints для admin dashboard. Требуют <code>SCHEDULER_ADMIN_API_KEY</code>. UI: <a href="/admin/" style="color: var(--accent);"><code>/admin/</code></a>.</p>
+      <table>
+        <tr>
+          <td><span class="method method-get">GET</span> <code>/admin/api/stats</code></td>
+          <td data-i18n="api.admin.stats">Сводка: jobs по статусам, active/dead workers, queue depth</td>
+        </tr>
+        <tr>
+          <td><span class="method method-get">GET</span> <code>/admin/api/jobs</code></td>
+          <td data-i18n="api.admin.jobs">Список jobs (<code>status</code>, <code>worker_id</code>, <code>limit</code>, <code>offset</code>)</td>
+        </tr>
+        <tr>
+          <td><span class="method method-get">GET</span> <code>/admin/api/workers</code></td>
+          <td data-i18n="api.admin.workers">Список workers с <code>running_jobs</code></td>
+        </tr>
+        <tr>
+          <td><span class="method method-get">GET</span> <code>/admin/api/workers/{id}</code></td>
+          <td data-i18n="api.admin.worker">Worker по ID</td>
+        </tr>
+        <tr>
+          <td><span class="method method-get">GET</span> <code>/admin/api/workers/{id}/jobs</code></td>
+          <td data-i18n="api.admin.workerJobs">Jobs, назначенные worker (<code>limit</code>, <code>offset</code>)</td>
+        </tr>
+      </table>
+      <pre><code>curl -s http://localhost:8080/admin/api/stats \
+  -H "Authorization: Bearer $SCHEDULER_ADMIN_API_KEY" | jq</code></pre>
+
       <h3 data-i18n="api.docs">Документация</h3>
       <table>
         <tr>
@@ -696,6 +724,30 @@ curl -s "http://localhost:8080/jobs/$JOB_ID" | jq '.download_url'</code></pre>
           <td data-i18n="api.docsDesc">Эта страница документации</td>
         </tr>
       </table>
+    </section>
+
+    <section id="admin">
+      <h2 data-i18n="admin.title">Admin Dashboard</h2>
+      <p data-i18n="admin.intro">
+        Встроенный web UI по адресу <a href="/admin/" style="color: var(--accent);"><code>/admin/</code></a>
+        для мониторинга jobs и workers в стиле CI pipeline (CircleCI-like).
+        Страница публична; данные загружаются через <code>/admin/api/*</code> с admin API-ключом (хранится в localStorage браузера).
+      </p>
+      <div class="card-grid">
+        <div class="card">
+          <h3 data-i18n="admin.card.overview">Overview</h3>
+          <p data-i18n="admin.card.overviewDesc">Сводка: running/queued/completed/failed jobs, active workers. Auto-refresh каждые 5 секунд.</p>
+        </div>
+        <div class="card">
+          <h3 data-i18n="admin.card.jobs">Jobs</h3>
+          <p data-i18n="admin.card.jobsDesc">Таблица jobs: статус, preset, worker, duration, attempt. Drill-down в job с просмотром stdout/stderr логов.</p>
+        </div>
+        <div class="card">
+          <h3 data-i18n="admin.card.workers">Workers</h3>
+          <p data-i18n="admin.card.workersDesc">Статус воркеров, heartbeat, running jobs. На странице worker — список его jobs и просмотр логов выбранной задачи.</p>
+        </div>
+      </div>
+      <p data-i18n="admin.logsNote">Логи job доступны после финализации попытки (<code>POST /workers/job-result</code>). Для running job UI показывает placeholder до завершения.</p>
     </section>
 
     <section id="env">
@@ -743,6 +795,10 @@ curl -s "http://localhost:8080/jobs/$JOB_ID" | jq '.download_url'</code></pre>
 ./scripts/gen-api-keys.sh --format=env
 ./scripts/gen-api-keys.sh --format=export</code></pre>
       <p data-i18n="env.genKeys.note">После смены ключей перезапустите scheduler и worker. Формат <code>--format=env</code> удобен для локального <code>.env</code>; <code>export</code> — для <code>source .env</code>.</p>
+      <h4 data-i18n="env.submitJobs.title">Массовая отправка jobs</h4>
+      <p data-i18n="env.submitJobs.intro">Скрипт <code>scripts/submit-jobs.sh</code> интерактивно запрашивает client API key и число <code>N</code>, затем отправляет <code>N</code> multipart-запросов <code>POST /jobs</code> с файлом <code>testdata/sample.mp4</code> (fallback: <code>testdata/fixtures/sample.mp4</code>). Требует настроенный R2 на scheduler.</p>
+      <pre><code>./scripts/submit-jobs.sh
+SCHEDULER_URL=http://localhost:8080 ./scripts/submit-jobs.sh</code></pre>
       <p data-i18n="env.r2.note">* Для R2-flow нужны вместе: <code>R2_BUCKET</code>, <code>R2_ACCESS_KEY_ID</code>, <code>R2_SECRET_ACCESS_KEY</code>, <code>R2_ENDPOINT</code> — на scheduler и worker.</p>
 
       <h3 data-i18n="env.worker">Worker (<code>cmd/worker</code>)</h3>
@@ -784,7 +840,7 @@ export SCHEDULER_ADDR=":8080"
 go run ./cmd/scheduler</code></pre>
 
       <ol start="3">
-        <li data-i18n="quickstart.step3">Открыть документацию: <a href="/docs/" style="color: var(--accent);">http://localhost:8080/docs/</a></li>
+        <li data-i18n="quickstart.step3">Открыть документацию: <a href="/docs/" style="color: var(--accent);">http://localhost:8080/docs/</a> или admin dashboard: <a href="/admin/" style="color: var(--accent);">http://localhost:8080/admin/</a></li>
         <li data-i18n="quickstart.step4">Запустить воркер (на машине с ffmpeg и доступом к файлам):</li>
       </ol>
       <pre><code>export SCHEDULER_URL="http://localhost:8080"
@@ -894,8 +950,10 @@ docker compose down -v       # удалить volumes (данные БД и /dat
 │   ├── types/              # Доменные типы
 │   └── worker/             # Клиент API + цикл воркера
 ├── .github/workflows/      # GitHub Actions (CI на pull request)
-├── scripts/                # gen-api-keys.sh — генерация API-ключей
-├── web/docs/               # HTML документация + embed
+├── scripts/                # gen-api-keys.sh, submit-jobs.sh
+├── web/
+│   ├── docs/               # HTML документация + embed
+│   └── admin/              # Admin dashboard UI + embed
 ├── Dockerfile              # scheduler + worker + migrate targets
 ├── docker-compose.yml
 ├── docker-compose.test.yml # PostgreSQL для integration-тестов (порт 5433)
@@ -1014,6 +1072,7 @@ make ci</code></pre>
         'nav.jobLifecycle': 'Жизненный цикл Job',
         'nav.database': 'База данных',
         'nav.api': 'HTTP API',
+        'nav.admin': 'Admin Dashboard',
         'nav.env': 'Переменные окружения',
         'nav.quickstart': 'Быстрый старт',
         'nav.docker': 'Docker',
@@ -1095,8 +1154,8 @@ make ci</code></pre>
         'api.auth.client': 'Client',
         'api.auth.worker': 'Worker',
         'api.auth.admin': 'Admin',
-        'api.auth.adminRoutes': 'Все защищённые маршруты',
-        'api.auth.public': 'Без ключа: <code>GET /health</code>, <code>GET /docs/</code>.',
+        'api.auth.adminRoutes': '<code>/admin/api/*</code> и все защищённые маршруты',
+        'api.auth.public': 'Без ключа: <code>GET /health</code>, <code>GET /docs/</code>, <code>GET /admin/</code> (UI; API dashboard требует admin-ключ).',
         'api.auth.errors': '<code>401</code> — ключ отсутствует или неверный; <code>403</code> — ключ верный, но роль не подходит для маршрута.',
         'api.health': 'Health',
         'api.healthDesc': 'Проверка доступности scheduler',
@@ -1137,6 +1196,22 @@ make ci</code></pre>
         'api.workers.requestBody': '<strong>POST /workers/request-job</strong>:',
         'api.workers.renewBody': '<strong>POST /workers/renew-lease</strong>:',
         'api.workers.resultBody': '<strong>POST /workers/job-result</strong>:',
+        'api.admin.title': 'Admin API',
+        'api.admin.intro': 'Read-only endpoints для admin dashboard. Требуют <code>SCHEDULER_ADMIN_API_KEY</code>. UI: <a href="/admin/" style="color: var(--accent);"><code>/admin/</code></a>.',
+        'api.admin.stats': 'Сводка: jobs по статусам, active/dead workers, queue depth',
+        'api.admin.jobs': 'Список jobs (<code>status</code>, <code>worker_id</code>, <code>limit</code>, <code>offset</code>)',
+        'api.admin.workers': 'Список workers с <code>running_jobs</code>',
+        'api.admin.worker': 'Worker по ID',
+        'api.admin.workerJobs': 'Jobs, назначенные worker (<code>limit</code>, <code>offset</code>)',
+        'admin.title': 'Admin Dashboard',
+        'admin.intro': 'Встроенный web UI по адресу <a href="/admin/" style="color: var(--accent);"><code>/admin/</code></a> для мониторинга jobs и workers в стиле CI pipeline (CircleCI-like). Страница публична; данные загружаются через <code>/admin/api/*</code> с admin API-ключом (хранится в localStorage браузера).',
+        'admin.card.overview': 'Overview',
+        'admin.card.overviewDesc': 'Сводка: running/queued/completed/failed jobs, active workers. Auto-refresh каждые 5 секунд.',
+        'admin.card.jobs': 'Jobs',
+        'admin.card.jobsDesc': 'Таблица jobs: статус, preset, worker, duration, attempt. Drill-down в job с просмотром stdout/stderr логов.',
+        'admin.card.workers': 'Workers',
+        'admin.card.workersDesc': 'Статус воркеров, heartbeat, running jobs. На странице worker — список его jobs и просмотр логов выбранной задачи.',
+        'admin.logsNote': 'Логи job доступны после финализации попытки (<code>POST /workers/job-result</code>). Для running job UI показывает placeholder до завершения.',
         'api.docs': 'Документация',
         'api.docsDesc': 'Эта страница документации',
         'env.title': 'Переменные окружения',
@@ -1189,12 +1264,14 @@ make ci</code></pre>
         'env.genKeys.title': 'Генерация API-ключей',
         'env.genKeys.intro': 'Скрипт <code>scripts/gen-api-keys.sh</code> создаёт три случайных ключа через <code>openssl rand</code>. Вывод идёт в stdout — для prod скопируйте значения в secrets manager, не коммитьте их в репозиторий.',
         'env.genKeys.note': 'После смены ключей перезапустите scheduler и worker. Формат <code>--format=env</code> удобен для локального <code>.env</code>; <code>export</code> — для <code>source .env</code>.',
+        'env.submitJobs.title': 'Массовая отправка jobs',
+        'env.submitJobs.intro': 'Скрипт <code>scripts/submit-jobs.sh</code> интерактивно запрашивает client API key и число <code>N</code>, затем отправляет <code>N</code> multipart-запросов <code>POST /jobs</code> с файлом <code>testdata/sample.mp4</code> (fallback: <code>testdata/fixtures/sample.mp4</code>). Требует настроенный R2 на scheduler.',
         'env.r2.worker': 'Те же переменные, что у scheduler',
         'quickstart.title': 'Быстрый старт',
         'quickstart.intro': 'Рекомендуемый способ — <a href="#docker">Docker Compose</a>. Ниже — локальный запуск без контейнеров.',
         'quickstart.step1': 'Поднять PostgreSQL и применить миграции:',
         'quickstart.step2': 'Запустить scheduler:',
-        'quickstart.step3': 'Открыть документацию: <a href="/docs/" style="color: var(--accent);">http://localhost:8080/docs/</a>',
+        'quickstart.step3': 'Открыть документацию: <a href="/docs/" style="color: var(--accent);">http://localhost:8080/docs/</a> или admin dashboard: <a href="/admin/" style="color: var(--accent);">http://localhost:8080/admin/</a>',
         'quickstart.step4': 'Запустить воркер (на машине с ffmpeg и доступом к файлам):',
         'quickstart.step5': 'Создать job:',
         'docker.title': 'Docker',
@@ -1262,6 +1339,7 @@ make ci</code></pre>
         'nav.jobLifecycle': 'Job lifecycle',
         'nav.database': 'Database',
         'nav.api': 'HTTP API',
+        'nav.admin': 'Admin Dashboard',
         'nav.env': 'Environment variables',
         'nav.quickstart': 'Quick start',
         'nav.docker': 'Docker',
@@ -1343,8 +1421,8 @@ make ci</code></pre>
         'api.auth.client': 'Client',
         'api.auth.worker': 'Worker',
         'api.auth.admin': 'Admin',
-        'api.auth.adminRoutes': 'All protected routes',
-        'api.auth.public': 'No key required: <code>GET /health</code>, <code>GET /docs/</code>.',
+        'api.auth.adminRoutes': '<code>/admin/api/*</code> and all protected routes',
+        'api.auth.public': 'No key required: <code>GET /health</code>, <code>GET /docs/</code>, <code>GET /admin/</code> (UI; dashboard API requires admin key).',
         'api.auth.errors': '<code>401</code> — missing or invalid key; <code>403</code> — valid key but wrong role for the route.',
         'api.health': 'Health',
         'api.healthDesc': 'Scheduler availability check',
@@ -1385,6 +1463,22 @@ make ci</code></pre>
         'api.workers.requestBody': '<strong>POST /workers/request-job</strong>:',
         'api.workers.renewBody': '<strong>POST /workers/renew-lease</strong>:',
         'api.workers.resultBody': '<strong>POST /workers/job-result</strong>:',
+        'api.admin.title': 'Admin API',
+        'api.admin.intro': 'Read-only endpoints for the admin dashboard. Require <code>SCHEDULER_ADMIN_API_KEY</code>. UI: <a href="/admin/" style="color: var(--accent);"><code>/admin/</code></a>.',
+        'api.admin.stats': 'Summary: jobs by status, active/dead workers, queue depth',
+        'api.admin.jobs': 'List jobs (<code>status</code>, <code>worker_id</code>, <code>limit</code>, <code>offset</code>)',
+        'api.admin.workers': 'List workers with <code>running_jobs</code>',
+        'api.admin.worker': 'Worker by ID',
+        'api.admin.workerJobs': 'Jobs assigned to worker (<code>limit</code>, <code>offset</code>)',
+        'admin.title': 'Admin Dashboard',
+        'admin.intro': 'Built-in web UI at <a href="/admin/" style="color: var(--accent);"><code>/admin/</code></a> for monitoring jobs and workers (CircleCI-like). Page is public; data is loaded via <code>/admin/api/*</code> with an admin API key (stored in browser localStorage).',
+        'admin.card.overview': 'Overview',
+        'admin.card.overviewDesc': 'Summary: running/queued/completed/failed jobs, active workers. Auto-refresh every 5 seconds.',
+        'admin.card.jobs': 'Jobs',
+        'admin.card.jobsDesc': 'Jobs table: status, preset, worker, duration, attempt. Drill-down to job with stdout/stderr logs.',
+        'admin.card.workers': 'Workers',
+        'admin.card.workersDesc': 'Worker status, heartbeat, running jobs. Worker page lists its jobs and shows logs for the selected task.',
+        'admin.logsNote': 'Job logs are available after attempt finalization (<code>POST /workers/job-result</code>). For running jobs the UI shows a placeholder until completion.',
         'api.docs': 'Documentation',
         'api.docsDesc': 'This documentation page',
         'env.title': 'Environment variables',
@@ -1437,12 +1531,14 @@ make ci</code></pre>
         'env.genKeys.title': 'Generating API keys',
         'env.genKeys.intro': 'Script <code>scripts/gen-api-keys.sh</code> creates three random keys via <code>openssl rand</code>. Output goes to stdout — for production, copy values into a secrets manager; do not commit them.',
         'env.genKeys.note': 'Restart scheduler and worker after changing keys. Use <code>--format=env</code> for a local <code>.env</code> file; <code>export</code> for <code>source .env</code>.',
+        'env.submitJobs.title': 'Bulk job submission',
+        'env.submitJobs.intro': 'Script <code>scripts/submit-jobs.sh</code> interactively asks for a client API key and count <code>N</code>, then sends <code>N</code> multipart <code>POST /jobs</code> requests with <code>testdata/sample.mp4</code> (fallback: <code>testdata/fixtures/sample.mp4</code>). Requires R2 configured on the scheduler.',
         'env.r2.worker': 'Same variables as scheduler',
         'quickstart.title': 'Quick start',
         'quickstart.intro': 'Recommended: <a href="#docker">Docker Compose</a>. Below — local run without containers.',
         'quickstart.step1': 'Start PostgreSQL and apply migrations:',
         'quickstart.step2': 'Start the scheduler:',
-        'quickstart.step3': 'Open docs: <a href="/docs/" style="color: var(--accent);">http://localhost:8080/docs/</a>',
+        'quickstart.step3': 'Open docs: <a href="/docs/" style="color: var(--accent);">http://localhost:8080/docs/</a> or admin dashboard: <a href="/admin/" style="color: var(--accent);">http://localhost:8080/admin/</a>',
         'quickstart.step4': 'Start a worker (machine with ffmpeg and file access):',
         'quickstart.step5': 'Create a job:',
         'docker.title': 'Docker',
@@ -1510,6 +1606,7 @@ make ci</code></pre>
         'nav.jobLifecycle': 'Життєвий цикл Job',
         'nav.database': 'База даних',
         'nav.api': 'HTTP API',
+        'nav.admin': 'Admin Dashboard',
         'nav.env': 'Змінні оточення',
         'nav.quickstart': 'Швидкий старт',
         'nav.docker': 'Docker',
@@ -1588,8 +1685,8 @@ make ci</code></pre>
         'api.auth.client': 'Client',
         'api.auth.worker': 'Worker',
         'api.auth.admin': 'Admin',
-        'api.auth.adminRoutes': 'Усі захищені маршрути',
-        'api.auth.public': 'Без ключа: <code>GET /health</code>, <code>GET /docs/</code>.',
+        'api.auth.adminRoutes': '<code>/admin/api/*</code> та всі захищені маршрути',
+        'api.auth.public': 'Без ключа: <code>GET /health</code>, <code>GET /docs/</code>, <code>GET /admin/</code> (UI; API dashboard потребує admin-ключ).',
         'api.auth.errors': '<code>401</code> — ключ відсутній або невірний; <code>403</code> — ключ вірний, але роль не підходить для маршруту.',
         'api.health': 'Health',
         'api.healthDesc': 'Перевірка доступності scheduler',
@@ -1628,6 +1725,22 @@ make ci</code></pre>
         'api.workers.result': 'Фіналізація job і запис логів',
         'api.workers.requestBody': '<strong>POST /workers/request-job</strong>:',
         'api.workers.resultBody': '<strong>POST /workers/job-result</strong>:',
+        'api.admin.title': 'Admin API',
+        'api.admin.intro': 'Read-only endpoints для admin dashboard. Потрібен <code>SCHEDULER_ADMIN_API_KEY</code>. UI: <a href="/admin/" style="color: var(--accent);"><code>/admin/</code></a>.',
+        'api.admin.stats': 'Зведення: jobs за статусами, active/dead workers, queue depth',
+        'api.admin.jobs': 'Список jobs (<code>status</code>, <code>worker_id</code>, <code>limit</code>, <code>offset</code>)',
+        'api.admin.workers': 'Список workers з <code>running_jobs</code>',
+        'api.admin.worker': 'Worker за ID',
+        'api.admin.workerJobs': 'Jobs, призначені worker (<code>limit</code>, <code>offset</code>)',
+        'admin.title': 'Admin Dashboard',
+        'admin.intro': 'Вбудований web UI за адресою <a href="/admin/" style="color: var(--accent);"><code>/admin/</code></a> для моніторингу jobs і workers (CircleCI-like). Сторінка публічна; дані завантажуються через <code>/admin/api/*</code> з admin API-ключем (зберігається в localStorage браузера).',
+        'admin.card.overview': 'Overview',
+        'admin.card.overviewDesc': 'Зведення: running/queued/completed/failed jobs, active workers. Auto-refresh кожні 5 секунд.',
+        'admin.card.jobs': 'Jobs',
+        'admin.card.jobsDesc': 'Таблиця jobs: статус, preset, worker, duration, attempt. Drill-down у job з переглядом stdout/stderr логів.',
+        'admin.card.workers': 'Workers',
+        'admin.card.workersDesc': 'Статус воркерів, heartbeat, running jobs. На сторінці worker — список його jobs і перегляд логів обраної задачі.',
+        'admin.logsNote': 'Логи job доступні після фіналізації спроби (<code>POST /workers/job-result</code>). Для running job UI показує placeholder до завершення.',
         'api.docs': 'Документація',
         'api.docsDesc': 'Ця сторінка документації',
         'env.title': 'Змінні оточення',
@@ -1675,12 +1788,14 @@ make ci</code></pre>
         'env.genKeys.title': 'Генерація API-ключів',
         'env.genKeys.intro': 'Скрипт <code>scripts/gen-api-keys.sh</code> створює три випадкові ключі через <code>openssl rand</code>. Вивід у stdout — для prod скопіюйте значення в secrets manager, не комітьте їх у репозиторій.',
         'env.genKeys.note': 'Після зміни ключів перезапустіть scheduler і worker. Формат <code>--format=env</code> зручний для локального <code>.env</code>; <code>export</code> — для <code>source .env</code>.',
+        'env.submitJobs.title': 'Масова відправка jobs',
+        'env.submitJobs.intro': 'Скрипт <code>scripts/submit-jobs.sh</code> інтерактивно запитує client API key і число <code>N</code>, потім надсилає <code>N</code> multipart-запитів <code>POST /jobs</code> з файлом <code>testdata/sample.mp4</code> (fallback: <code>testdata/fixtures/sample.mp4</code>). Потрібен налаштований R2 на scheduler.',
         'env.r2.worker': 'Ті самі змінні, що у scheduler',
         'quickstart.title': 'Швидкий старт',
         'quickstart.intro': 'Рекомендований спосіб — <a href="#docker">Docker Compose</a>. Нижче — локальний запуск без контейнерів.',
         'quickstart.step1': 'Підняти PostgreSQL і застосувати міграцію:',
         'quickstart.step2': 'Запустити scheduler:',
-        'quickstart.step3': 'Відкрити документацію: <a href="/docs/" style="color: var(--accent);">http://localhost:8080/docs/</a>',
+        'quickstart.step3': 'Відкрити документацію: <a href="/docs/" style="color: var(--accent);">http://localhost:8080/docs/</a> або admin dashboard: <a href="/admin/" style="color: var(--accent);">http://localhost:8080/admin/</a>',
         'quickstart.step4': 'Запустити воркер (на машині з ffmpeg і доступом до файлів):',
         'quickstart.step5': 'Створити job:',
         'docker.title': 'Docker',

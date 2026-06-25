@@ -28,6 +28,10 @@ type mockStore struct {
 	acquireJobFn           func(ctx context.Context, workerID string, lease time.Duration) (*types.Job, error)
 	renewLeaseFn           func(ctx context.Context, jobID, workerID string, leaseGeneration int64, lease time.Duration) (*types.Job, error)
 	finishJobFn            func(ctx context.Context, jobID, workerID string, leaseGeneration int64, success bool, logs []types.JobLogEntry) error
+	listJobsFn             func(ctx context.Context, filter store.ListJobsFilter) (store.ListJobsResult, error)
+	listWorkersFn          func(ctx context.Context) ([]types.WorkerStats, error)
+	getWorkerFn            func(ctx context.Context, id string) (*types.WorkerStats, error)
+	getAdminStatsFn        func(ctx context.Context) (store.AdminStats, error)
 }
 
 func (m *mockStore) CreateJob(ctx context.Context, job *types.Job) error {
@@ -98,6 +102,34 @@ func (m *mockStore) FinishJob(ctx context.Context, jobID, workerID string, lease
 		return m.finishJobFn(ctx, jobID, workerID, leaseGeneration, success, logs)
 	}
 	return nil
+}
+
+func (m *mockStore) ListJobs(ctx context.Context, filter store.ListJobsFilter) (store.ListJobsResult, error) {
+	if m.listJobsFn != nil {
+		return m.listJobsFn(ctx, filter)
+	}
+	return store.ListJobsResult{}, nil
+}
+
+func (m *mockStore) ListWorkers(ctx context.Context) ([]types.WorkerStats, error) {
+	if m.listWorkersFn != nil {
+		return m.listWorkersFn(ctx)
+	}
+	return nil, nil
+}
+
+func (m *mockStore) GetWorker(ctx context.Context, id string) (*types.WorkerStats, error) {
+	if m.getWorkerFn != nil {
+		return m.getWorkerFn(ctx, id)
+	}
+	return nil, sql.ErrNoRows
+}
+
+func (m *mockStore) GetAdminStats(ctx context.Context) (store.AdminStats, error) {
+	if m.getAdminStatsFn != nil {
+		return m.getAdminStatsFn(ctx)
+	}
+	return store.AdminStats{JobsByStatus: map[string]int{}}, nil
 }
 
 func newTestServer(st JobStore) *httptest.Server {

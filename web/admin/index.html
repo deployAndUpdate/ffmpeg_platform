@@ -1,0 +1,809 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Admin Dashboard — go_distributed_system</title>
+  <style>
+    :root {
+      --bg: #0f1419;
+      --surface: #1a2332;
+      --surface-2: #243044;
+      --border: #2d3a4f;
+      --text: #e6edf3;
+      --text-muted: #8b9cb3;
+      --accent: #3b82f6;
+      --accent-soft: rgba(59, 130, 246, 0.15);
+      --green: #22c55e;
+      --yellow: #eab308;
+      --red: #ef4444;
+      --orange: #f97316;
+      --purple: #a855f7;
+      --code-bg: #0d1117;
+      --sidebar-w: 240px;
+      --radius: 8px;
+      --font: "Segoe UI", system-ui, -apple-system, sans-serif;
+      --mono: "Cascadia Code", "Fira Code", "JetBrains Mono", Consolas, monospace;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: var(--font);
+      background: var(--bg);
+      color: var(--text);
+      display: flex;
+      min-height: 100vh;
+    }
+
+    aside {
+      position: fixed;
+      top: 0; left: 0;
+      width: var(--sidebar-w);
+      height: 100vh;
+      background: var(--surface);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      z-index: 20;
+    }
+
+    .brand {
+      padding: 1.25rem;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .brand h1 { font-size: 0.95rem; font-weight: 700; }
+    .brand p { font-size: 0.72rem; color: var(--text-muted); margin-top: 0.25rem; }
+
+    nav { flex: 1; padding: 0.75rem 0; }
+
+    nav a {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.55rem 1.25rem;
+      color: var(--text-muted);
+      text-decoration: none;
+      font-size: 0.875rem;
+      transition: background 0.15s, color 0.15s;
+    }
+
+    nav a:hover, nav a.active {
+      color: var(--accent);
+      background: var(--accent-soft);
+    }
+
+    .sidebar-footer {
+      padding: 1rem 1.25rem;
+      border-top: 1px solid var(--border);
+      font-size: 0.75rem;
+    }
+
+    .sidebar-footer a { color: var(--accent); text-decoration: none; }
+
+    main {
+      margin-left: var(--sidebar-w);
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+    }
+
+    header.topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0.85rem 1.5rem;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+
+    header.topbar h2 { font-size: 1.1rem; font-weight: 600; }
+
+    .topbar-actions { display: flex; align-items: center; gap: 0.75rem; }
+
+    .content { padding: 1.5rem; flex: 1; }
+
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+      gap: 1rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .stat-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1rem 1.1rem;
+    }
+
+    .stat-card .label {
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+      margin-bottom: 0.35rem;
+    }
+
+    .stat-card .value { font-size: 1.75rem; font-weight: 700; }
+
+    .stat-card.running .value { color: var(--accent); }
+    .stat-card.queued .value { color: var(--yellow); }
+    .stat-card.completed .value { color: var(--green); }
+    .stat-card.failed .value { color: var(--red); }
+    .stat-card.workers .value { color: var(--purple); }
+
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+      align-items: center;
+      margin-bottom: 1rem;
+    }
+
+    select, input[type="text"], input[type="password"] {
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      color: var(--text);
+      border-radius: var(--radius);
+      padding: 0.45rem 0.65rem;
+      font-size: 0.85rem;
+      font-family: inherit;
+    }
+
+    button, .btn {
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      border-radius: var(--radius);
+      padding: 0.45rem 0.85rem;
+      font-size: 0.85rem;
+      cursor: pointer;
+      font-family: inherit;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+    }
+
+    button.secondary, .btn.secondary {
+      background: var(--surface-2);
+      color: var(--text);
+      border: 1px solid var(--border);
+    }
+
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    .table-wrap {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: auto;
+    }
+
+    table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+
+    th, td {
+      padding: 0.65rem 0.85rem;
+      text-align: left;
+      border-bottom: 1px solid var(--border);
+      white-space: nowrap;
+    }
+
+    th {
+      background: var(--surface-2);
+      color: var(--text-muted);
+      font-weight: 600;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      position: sticky;
+      top: 0;
+    }
+
+    tr:last-child td { border-bottom: none; }
+
+    tr.clickable { cursor: pointer; }
+    tr.clickable:hover td { background: var(--accent-soft); }
+
+    .badge {
+      display: inline-block;
+      padding: 0.15rem 0.5rem;
+      border-radius: 999px;
+      font-size: 0.68rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    .badge-NEW { background: rgba(168, 85, 247, 0.2); color: var(--purple); }
+    .badge-QUEUED { background: rgba(234, 179, 8, 0.2); color: var(--yellow); }
+    .badge-RUNNING { background: rgba(59, 130, 246, 0.2); color: var(--accent); }
+    .badge-COMPLETED { background: rgba(34, 197, 94, 0.2); color: var(--green); }
+    .badge-FAILED { background: rgba(239, 68, 68, 0.2); color: var(--red); }
+    .badge-RETRY { background: rgba(249, 115, 22, 0.2); color: var(--orange); }
+    .badge-ACTIVE { background: rgba(34, 197, 94, 0.2); color: var(--green); }
+    .badge-DEAD { background: rgba(239, 68, 68, 0.2); color: var(--red); }
+
+    .mono { font-family: var(--mono); font-size: 0.8rem; }
+
+    .muted { color: var(--text-muted); }
+
+    .detail-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+      gap: 0.75rem;
+      margin-bottom: 1.25rem;
+    }
+
+    .detail-item {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 0.75rem 0.9rem;
+    }
+
+    .detail-item .label {
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      margin-bottom: 0.25rem;
+    }
+
+    .log-panel {
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      min-height: 360px;
+    }
+
+    .log-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0.55rem 0.85rem;
+      background: var(--surface-2);
+      border-bottom: 1px solid var(--border);
+      font-size: 0.8rem;
+    }
+
+    .log-body {
+      flex: 1;
+      overflow: auto;
+      padding: 0.75rem;
+      font-family: var(--mono);
+      font-size: 0.78rem;
+      line-height: 1.5;
+      max-height: 520px;
+    }
+
+    .log-line { white-space: pre-wrap; word-break: break-all; }
+    .log-line.stderr { color: #fca5a5; }
+    .log-line.stdout { color: #86efac; }
+    .log-line .ts { color: var(--text-muted); margin-right: 0.5rem; }
+
+    .empty-state {
+      text-align: center;
+      padding: 3rem 1rem;
+      color: var(--text-muted);
+    }
+
+    .error-banner {
+      background: rgba(239, 68, 68, 0.15);
+      border: 1px solid rgba(239, 68, 68, 0.4);
+      color: #fca5a5;
+      padding: 0.75rem 1rem;
+      border-radius: var(--radius);
+      margin-bottom: 1rem;
+      font-size: 0.85rem;
+    }
+
+    .breadcrumb {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      margin-bottom: 1rem;
+      font-size: 0.85rem;
+    }
+
+    .breadcrumb a { color: var(--accent); text-decoration: none; }
+    .breadcrumb span { color: var(--text-muted); }
+
+    .refresh-indicator { font-size: 0.75rem; color: var(--text-muted); }
+
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.6);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 100;
+    }
+
+    .modal {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.5rem;
+      width: min(420px, 92vw);
+    }
+
+    .modal h3 { margin-bottom: 0.75rem; }
+    .modal p { color: var(--text-muted); font-size: 0.85rem; margin-bottom: 1rem; }
+    .modal input { width: 100%; margin-bottom: 1rem; }
+    .modal-actions { display: flex; gap: 0.5rem; justify-content: flex-end; }
+
+    .hidden { display: none !important; }
+
+    .split-view {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+    }
+
+    @media (max-width: 960px) {
+      aside { width: 200px; }
+      main { margin-left: 200px; }
+      .split-view { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <aside>
+    <div class="brand">
+      <h1>Admin Dashboard</h1>
+      <p>go_distributed_system</p>
+    </div>
+    <nav>
+      <a href="#/" data-route="overview">Overview</a>
+      <a href="#/jobs" data-route="jobs">Jobs</a>
+      <a href="#/workers" data-route="workers">Workers</a>
+    </nav>
+    <div class="sidebar-footer">
+      <a href="/docs/">API Docs</a>
+    </div>
+  </aside>
+
+  <main>
+    <header class="topbar">
+      <h2 id="page-title">Overview</h2>
+      <div class="topbar-actions">
+        <span class="refresh-indicator" id="refresh-indicator"></span>
+        <button class="secondary" id="btn-refresh" type="button">Refresh</button>
+        <button class="secondary" id="btn-settings" type="button">API Key</button>
+      </div>
+    </header>
+    <div class="content" id="app"></div>
+  </main>
+
+  <div class="modal-backdrop hidden" id="settings-modal">
+    <div class="modal">
+      <h3>Admin API Key</h3>
+      <p>Укажите <code>SCHEDULER_ADMIN_API_KEY</code>. Ключ хранится только в localStorage браузера.</p>
+      <input type="password" id="api-key-input" placeholder="Admin API key" autocomplete="off">
+      <div class="modal-actions">
+        <button class="secondary" id="btn-cancel-key" type="button">Cancel</button>
+        <button id="btn-save-key" type="button">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const STORAGE_KEY = 'scheduler_admin_api_key';
+    let refreshTimer = null;
+    let currentRoute = parseRoute();
+
+    function getApiKey() {
+      return localStorage.getItem(STORAGE_KEY) || '';
+    }
+
+    function setApiKey(key) {
+      if (key) localStorage.setItem(STORAGE_KEY, key);
+      else localStorage.removeItem(STORAGE_KEY);
+    }
+
+    function parseRoute() {
+      const hash = location.hash.replace(/^#\/?/, '') || 'overview';
+      const parts = hash.split('/').filter(Boolean);
+      return { page: parts[0] || 'overview', id: parts[1] || null };
+    }
+
+    async function api(path) {
+      const key = getApiKey();
+      const headers = { Accept: 'application/json' };
+      if (key) headers.Authorization = 'Bearer ' + key;
+      const res = await fetch(path, { headers });
+      if (res.status === 401 || res.status === 403) {
+        throw new Error('Неверный или отсутствующий admin API key (401/403)');
+      }
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error('HTTP ' + res.status + ': ' + text.slice(0, 200));
+      }
+      return res.json();
+    }
+
+    function fmtTime(ts) {
+      if (!ts) return '—';
+      const d = new Date(ts);
+      return d.toLocaleString();
+    }
+
+    function fmtDuration(start, end) {
+      if (!start) return '—';
+      const a = new Date(start).getTime();
+      const b = end ? new Date(end).getTime() : Date.now();
+      const sec = Math.max(0, Math.floor((b - a) / 1000));
+      if (sec < 60) return sec + 's';
+      const m = Math.floor(sec / 60);
+      const s = sec % 60;
+      if (m < 60) return m + 'm ' + s + 's';
+      const h = Math.floor(m / 60);
+      return h + 'h ' + (m % 60) + 'm';
+    }
+
+    function badge(status) {
+      return '<span class="badge badge-' + status + '">' + status + '</span>';
+    }
+
+    function shortId(id) {
+      if (!id) return '—';
+      return id.length > 12 ? id.slice(0, 8) + '…' : id;
+    }
+
+    function setRefreshIndicator(text) {
+      document.getElementById('refresh-indicator').textContent = text || '';
+    }
+
+    function showError(msg) {
+      return '<div class="error-banner">' + escapeHtml(msg) + '</div>';
+    }
+
+    function escapeHtml(s) {
+      return String(s)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+    }
+
+    function renderLogs(logs, emptyMsg) {
+      if (!logs || logs.length === 0) {
+        return '<div class="empty-state">' + escapeHtml(emptyMsg || 'Логов пока нет') + '</div>';
+      }
+      return logs.map(function (l) {
+        return '<div class="log-line ' + escapeHtml(l.stream) + '">' +
+          '<span class="ts">' + escapeHtml(fmtTime(l.ts)) + '</span>' +
+          escapeHtml(l.line) + '</div>';
+      }).join('');
+    }
+
+    async function renderOverview() {
+      document.getElementById('page-title').textContent = 'Overview';
+      const app = document.getElementById('app');
+      if (!getApiKey()) {
+        app.innerHTML = showError('Укажите Admin API Key для загрузки данных.');
+        return;
+      }
+      try {
+        const stats = await api('/admin/api/stats');
+        const running = stats.jobs_by_status?.RUNNING || 0;
+        const queued = stats.queue_depth || 0;
+        const completed = stats.jobs_by_status?.COMPLETED || 0;
+        const failed = stats.jobs_by_status?.FAILED || 0;
+        app.innerHTML =
+          '<div class="stats-grid">' +
+          statCard('Running', running, 'running') +
+          statCard('Queue', queued, 'queued') +
+          statCard('Completed', completed, 'completed') +
+          statCard('Failed', failed, 'failed') +
+          statCard('Active Workers', stats.workers_active || 0, 'workers') +
+          '</div>' +
+          '<div class="toolbar">' +
+          '<a class="btn" href="#/jobs">View Jobs</a>' +
+          '<a class="btn secondary" href="#/workers">View Workers</a>' +
+          '</div>' +
+          renderStatusBreakdown(stats.jobs_by_status);
+        setRefreshIndicator('Updated ' + new Date().toLocaleTimeString());
+      } catch (e) {
+        app.innerHTML = showError(e.message);
+      }
+    }
+
+    function statCard(label, value, cls) {
+      return '<div class="stat-card ' + cls + '"><div class="label">' + label +
+        '</div><div class="value">' + value + '</div></div>';
+    }
+
+    function renderStatusBreakdown(byStatus) {
+      if (!byStatus) return '';
+      const rows = Object.entries(byStatus).sort(function (a, b) { return b[1] - a[1]; })
+        .map(function (pair) {
+          return '<tr><td>' + badge(pair[0]) + '</td><td>' + pair[1] + '</td></tr>';
+        }).join('');
+      return '<div class="table-wrap"><table><thead><tr><th>Status</th><th>Count</th></tr></thead><tbody>' +
+        rows + '</tbody></table></div>';
+    }
+
+    async function renderJobs() {
+      document.getElementById('page-title').textContent = 'Jobs';
+      const app = document.getElementById('app');
+      if (!getApiKey()) {
+        app.innerHTML = showError('Укажите Admin API Key.');
+        return;
+      }
+      const status = sessionStorage.getItem('jobs_filter_status') || '';
+      app.innerHTML =
+        '<div class="toolbar">' +
+        '<select id="status-filter">' +
+        '<option value="">All statuses</option>' +
+        ['NEW','QUEUED','RUNNING','COMPLETED','FAILED','RETRY'].map(function (s) {
+          return '<option value="' + s + '"' + (status === s ? ' selected' : '') + '>' + s + '</option>';
+        }).join('') +
+        '</select></div><div id="jobs-table">Loading…</div>';
+
+      document.getElementById('status-filter').addEventListener('change', function (e) {
+        sessionStorage.setItem('jobs_filter_status', e.target.value);
+        loadJobsTable();
+      });
+      await loadJobsTable();
+    }
+
+    async function loadJobsTable() {
+      const status = document.getElementById('status-filter')?.value || sessionStorage.getItem('jobs_filter_status') || '';
+      const qs = new URLSearchParams({ limit: '100' });
+      if (status) qs.set('status', status);
+      try {
+        const data = await api('/admin/api/jobs?' + qs.toString());
+        const rows = (data.jobs || []).map(function (j) {
+          return '<tr class="clickable" data-job-id="' + escapeHtml(j.id) + '">' +
+            '<td>' + badge(j.status) + '</td>' +
+            '<td class="mono">' + escapeHtml(shortId(j.id)) + '</td>' +
+            '<td>' + escapeHtml(j.preset || '—') + '</td>' +
+            '<td class="mono">' + escapeHtml(shortId(j.assigned_worker_id)) + '</td>' +
+            '<td>' + escapeHtml(fmtDuration(j.started_at, j.finished_at)) + '</td>' +
+            '<td class="muted">' + escapeHtml(fmtTime(j.created_at)) + '</td>' +
+            '<td>' + (j.attempt || 0) + '/' + (j.max_attempts || 0) + '</td>' +
+            '</tr>';
+        }).join('');
+        document.getElementById('jobs-table').innerHTML =
+          '<div class="table-wrap"><table><thead><tr>' +
+          '<th>Status</th><th>ID</th><th>Preset</th><th>Worker</th><th>Duration</th><th>Created</th><th>Attempt</th>' +
+          '</tr></thead><tbody>' + (rows || '<tr><td colspan="7" class="muted">No jobs</td></tr>') +
+          '</tbody></table></div><p class="muted" style="margin-top:0.75rem">Total: ' + (data.total || 0) + '</p>';
+
+        document.querySelectorAll('[data-job-id]').forEach(function (el) {
+          el.addEventListener('click', function () {
+            location.hash = '#/jobs/' + el.getAttribute('data-job-id');
+          });
+        });
+        setRefreshIndicator('Updated ' + new Date().toLocaleTimeString());
+      } catch (e) {
+        document.getElementById('jobs-table').innerHTML = showError(e.message);
+      }
+    }
+
+    async function renderJobDetail(id) {
+      document.getElementById('page-title').textContent = 'Job ' + shortId(id);
+      const app = document.getElementById('app');
+      if (!getApiKey()) {
+        app.innerHTML = showError('Укажите Admin API Key.');
+        return;
+      }
+      app.innerHTML = 'Loading…';
+      try {
+        const job = await api('/jobs/' + encodeURIComponent(id));
+        const logsResp = await api('/jobs/' + encodeURIComponent(id) + '/logs');
+        app.innerHTML =
+          '<div class="breadcrumb"><a href="#/jobs">Jobs</a><span>/</span><span class="mono">' +
+          escapeHtml(id) + '</span></div>' +
+          '<div class="detail-grid">' +
+          detailItem('Status', badge(job.status)) +
+          detailItem('Preset', escapeHtml(job.preset || '—')) +
+          detailItem('Storage', escapeHtml(job.storage || 'local')) +
+          detailItem('Worker', '<span class="mono">' + escapeHtml(job.assigned_worker_id || '—') + '</span>') +
+          detailItem('Duration', escapeHtml(fmtDuration(job.started_at, job.finished_at))) +
+          detailItem('Created', escapeHtml(fmtTime(job.created_at))) +
+          detailItem('Started', escapeHtml(fmtTime(job.started_at))) +
+          detailItem('Finished', escapeHtml(fmtTime(job.finished_at))) +
+          detailItem('Attempt', (job.attempt || 0) + ' / ' + (job.max_attempts || 0)) +
+          '</div>' +
+          '<div class="detail-grid">' +
+          detailItem('Input', '<span class="mono">' + escapeHtml(job.input_path) + '</span>') +
+          detailItem('Output', '<span class="mono">' + escapeHtml(job.output_path) + '</span>') +
+          '</div>' +
+          logPanel('Job logs', renderLogs(logsResp.logs,
+            job.status === 'RUNNING'
+              ? 'Job выполняется — логи появятся после завершения попытки'
+              : 'Логов нет'));
+        setRefreshIndicator('Updated ' + new Date().toLocaleTimeString());
+      } catch (e) {
+        app.innerHTML = showError(e.message);
+      }
+    }
+
+    function detailItem(label, value) {
+      return '<div class="detail-item"><div class="label">' + label + '</div><div>' + value + '</div></div>';
+    }
+
+    function logPanel(title, body) {
+      return '<div class="log-panel"><div class="log-header"><span>' + escapeHtml(title) +
+        '</span></div><div class="log-body">' + body + '</div></div>';
+    }
+
+    async function renderWorkers() {
+      document.getElementById('page-title').textContent = 'Workers';
+      const app = document.getElementById('app');
+      if (!getApiKey()) {
+        app.innerHTML = showError('Укажите Admin API Key.');
+        return;
+      }
+      app.innerHTML = '<div id="workers-table">Loading…</div>';
+      try {
+        const data = await api('/admin/api/workers');
+        const rows = (data.workers || []).map(function (w) {
+          return '<tr class="clickable" data-worker-id="' + escapeHtml(w.id) + '">' +
+            '<td>' + badge(w.status) + '</td>' +
+            '<td>' + escapeHtml(w.hostname) + '</td>' +
+            '<td class="mono">' + escapeHtml(shortId(w.id)) + '</td>' +
+            '<td>' + (w.running_jobs || 0) + ' / ' + (w.max_parallel_jobs || 1) + '</td>' +
+            '<td>' + (w.gpu_available ? 'yes' : 'no') + '</td>' +
+            '<td class="muted">' + escapeHtml(fmtTime(w.last_heartbeat_at)) + '</td>' +
+            '</tr>';
+        }).join('');
+        document.getElementById('workers-table').innerHTML =
+          '<div class="table-wrap"><table><thead><tr>' +
+          '<th>Status</th><th>Hostname</th><th>ID</th><th>Running</th><th>GPU</th><th>Heartbeat</th>' +
+          '</tr></thead><tbody>' + (rows || '<tr><td colspan="6" class="muted">No workers</td></tr>') +
+          '</tbody></table></div>';
+
+        document.querySelectorAll('[data-worker-id]').forEach(function (el) {
+          el.addEventListener('click', function () {
+            location.hash = '#/workers/' + el.getAttribute('data-worker-id');
+          });
+        });
+        setRefreshIndicator('Updated ' + new Date().toLocaleTimeString());
+      } catch (e) {
+        document.getElementById('workers-table').innerHTML = showError(e.message);
+      }
+    }
+
+    async function renderWorkerDetail(id) {
+      document.getElementById('page-title').textContent = 'Worker ' + shortId(id);
+      const app = document.getElementById('app');
+      if (!getApiKey()) {
+        app.innerHTML = showError('Укажите Admin API Key.');
+        return;
+      }
+      app.innerHTML = 'Loading…';
+      try {
+        const worker = await api('/admin/api/workers/' + encodeURIComponent(id));
+        const jobsData = await api('/admin/api/workers/' + encodeURIComponent(id) + '/jobs?limit=30');
+        const jobs = jobsData.jobs || [];
+        const running = jobs.filter(function (j) { return j.status === 'RUNNING'; });
+        const selectedJobId = sessionStorage.getItem('worker_selected_job_' + id) ||
+          (running[0] && running[0].id) || (jobs[0] && jobs[0].id) || null;
+
+        let logsHtml = '<div class="empty-state">Выберите job для просмотра логов</div>';
+        if (selectedJobId) {
+          try {
+            const logsResp = await api('/jobs/' + encodeURIComponent(selectedJobId) + '/logs');
+            const sel = jobs.find(function (j) { return j.id === selectedJobId; });
+            logsHtml = renderLogs(logsResp.logs,
+              sel && sel.status === 'RUNNING'
+                ? 'Job выполняется — логи появятся после завершения попытки'
+                : 'Логов нет');
+          } catch (e) {
+            logsHtml = showError(e.message);
+          }
+        }
+
+        const jobRows = jobs.map(function (j) {
+          const active = j.id === selectedJobId ? ' style="background:var(--accent-soft)"' : '';
+          return '<tr class="clickable" data-select-job="' + escapeHtml(j.id) + '"' + active + '>' +
+            '<td>' + badge(j.status) + '</td>' +
+            '<td class="mono">' + escapeHtml(shortId(j.id)) + '</td>' +
+            '<td>' + escapeHtml(j.preset || '—') + '</td>' +
+            '<td>' + escapeHtml(fmtDuration(j.started_at, j.finished_at)) + '</td>' +
+            '<td class="muted">' + escapeHtml(fmtTime(j.started_at || j.created_at)) + '</td>' +
+            '</tr>';
+        }).join('');
+
+        app.innerHTML =
+          '<div class="breadcrumb"><a href="#/workers">Workers</a><span>/</span><span>' +
+          escapeHtml(worker.hostname) + '</span></div>' +
+          '<div class="detail-grid">' +
+          detailItem('Status', badge(worker.status)) +
+          detailItem('Hostname', escapeHtml(worker.hostname)) +
+          detailItem('ID', '<span class="mono">' + escapeHtml(worker.id) + '</span>') +
+          detailItem('Running jobs', (worker.running_jobs || 0) + ' / ' + (worker.max_parallel_jobs || 1)) +
+          detailItem('CPU cores', worker.cpu_cores || '—') +
+          detailItem('GPU', worker.gpu_available ? 'yes' : 'no') +
+          detailItem('Last heartbeat', escapeHtml(fmtTime(worker.last_heartbeat_at))) +
+          '</div>' +
+          '<div class="split-view">' +
+          '<div><h3 style="margin-bottom:0.75rem;font-size:0.95rem">Jobs on worker</h3>' +
+          '<div class="table-wrap"><table><thead><tr>' +
+          '<th>Status</th><th>ID</th><th>Preset</th><th>Duration</th><th>Started</th>' +
+          '</tr></thead><tbody>' + (jobRows || '<tr><td colspan="5" class="muted">No jobs</td></tr>') +
+          '</tbody></table></div></div>' +
+          logPanel('Job logs' + (selectedJobId ? ' — ' + shortId(selectedJobId) : ''), logsHtml) +
+          '</div>';
+
+        document.querySelectorAll('[data-select-job]').forEach(function (el) {
+          el.addEventListener('click', function () {
+            sessionStorage.setItem('worker_selected_job_' + id, el.getAttribute('data-select-job'));
+            renderWorkerDetail(id);
+          });
+        });
+        setRefreshIndicator('Updated ' + new Date().toLocaleTimeString());
+      } catch (e) {
+        app.innerHTML = showError(e.message);
+      }
+    }
+
+    function updateNav() {
+      document.querySelectorAll('nav a[data-route]').forEach(function (a) {
+        const route = a.getAttribute('data-route');
+        const active = currentRoute.page === route ||
+          (route === 'jobs' && currentRoute.page === 'jobs') ||
+          (route === 'workers' && currentRoute.page === 'workers');
+        a.classList.toggle('active', active && !currentRoute.id);
+      });
+    }
+
+    async function render() {
+      currentRoute = parseRoute();
+      updateNav();
+      clearInterval(refreshTimer);
+
+      if (currentRoute.page === 'jobs' && currentRoute.id) {
+        await renderJobDetail(currentRoute.id);
+      } else if (currentRoute.page === 'jobs') {
+        await renderJobs();
+        refreshTimer = setInterval(loadJobsTable, 5000);
+      } else if (currentRoute.page === 'workers' && currentRoute.id) {
+        await renderWorkerDetail(currentRoute.id);
+        const wid = currentRoute.id;
+        refreshTimer = setInterval(function () { renderWorkerDetail(wid); }, 5000);
+      } else if (currentRoute.page === 'workers') {
+        await renderWorkers();
+        refreshTimer = setInterval(renderWorkers, 5000);
+      } else {
+        await renderOverview();
+        refreshTimer = setInterval(renderOverview, 5000);
+      }
+    }
+
+    document.getElementById('btn-refresh').addEventListener('click', render);
+    document.getElementById('btn-settings').addEventListener('click', function () {
+      document.getElementById('api-key-input').value = getApiKey();
+      document.getElementById('settings-modal').classList.remove('hidden');
+    });
+    document.getElementById('btn-cancel-key').addEventListener('click', function () {
+      document.getElementById('settings-modal').classList.add('hidden');
+    });
+    document.getElementById('btn-save-key').addEventListener('click', function () {
+      setApiKey(document.getElementById('api-key-input').value.trim());
+      document.getElementById('settings-modal').classList.add('hidden');
+      render();
+    });
+
+    window.addEventListener('hashchange', render);
+
+    if (!getApiKey()) {
+      document.getElementById('settings-modal').classList.remove('hidden');
+    }
+    render();
+  </script>
+</body>
+</html>

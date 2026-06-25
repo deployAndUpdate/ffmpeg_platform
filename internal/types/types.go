@@ -80,3 +80,9 @@ type JobLog struct {
 	Stream string    `json:"stream"`
 	Line   string    `json:"line"`
 }
+
+// WorkerStats extends Worker with live workload counters for the admin dashboard.
+type WorkerStats struct {
+	Worker
+	RunningJobs int `json:"running_jobs"`
+}

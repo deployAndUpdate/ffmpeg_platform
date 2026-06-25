@@ -15,6 +15,7 @@ import (
 	"go_distributed_system/internal/store"
 	"go_distributed_system/internal/storage"
 	"go_distributed_system/internal/types"
+	webadmin "go_distributed_system/web/admin"
 	webdocs "go_distributed_system/web/docs"
 
 	"github.com/google/uuid"
@@ -74,7 +75,23 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/workers/renew-lease", s.handleWorkerRenewLease)
 	s.mux.HandleFunc("/workers/job-result", s.handleWorkerJobResult)
 
+	s.mux.HandleFunc("/admin/api/", s.handleAdmin)
+
 	s.registerDocsRoutes()
+	s.registerAdminRoutes()
+}
+
+func (s *Server) registerAdminRoutes() {
+	sub, err := fs.Sub(webadmin.FS, ".")
+	if err != nil {
+		log.Printf("admin fs: %v", err)
+		return
+	}
+	fileServer := http.FileServer(http.FS(sub))
+	s.mux.Handle("/admin/", http.StripPrefix("/admin/", fileServer))
+	s.mux.HandleFunc("/admin", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/admin/", http.StatusMovedPermanently)
+	})
 }
 
 func (s *Server) registerDocsRoutes() {

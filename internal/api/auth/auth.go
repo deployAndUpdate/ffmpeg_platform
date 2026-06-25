@@ -134,6 +134,10 @@ func routeRole(path string) (Role, bool) {
 	switch {
 	case path == "/health", path == "/docs", strings.HasPrefix(path, "/docs/"):
 		return 0, false
+	case path == "/admin", strings.HasPrefix(path, "/admin/") && !strings.HasPrefix(path, "/admin/api"):
+		return 0, false
+	case strings.HasPrefix(path, "/admin/api"):
+		return RoleAdmin, true
 	case strings.HasPrefix(path, "/workers/"):
 		return RoleWorker, true
 	case path == "/presets", path == "/jobs", strings.HasPrefix(path, "/jobs/"):
