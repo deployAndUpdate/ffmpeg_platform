@@ -64,6 +64,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/health", s.handleHealth)
+	s.mux.HandleFunc("/ready", s.handleReady)
 	s.mux.HandleFunc("/presets", s.handlePresets)
 	s.mux.HandleFunc("/jobs/init", s.handleJobsInit)
 	s.mux.HandleFunc("/jobs", s.handleJobs)

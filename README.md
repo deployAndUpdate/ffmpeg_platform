@@ -59,7 +59,8 @@ NEW → QUEUED → RUNNING → COMPLETED
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/health` | Health check |
+| GET | `/health` | Liveness probe (process up) |
+| GET | `/ready` | Readiness probe (PostgreSQL + R2 if configured) |
 | GET | `/presets` | List transcode presets |
 | POST | `/jobs/init` | Create R2 job + presigned upload URL |
 | POST | `/jobs/{id}/submit` | Confirm R2 upload, enqueue job |
@@ -75,7 +76,7 @@ NEW → QUEUED → RUNNING → COMPLETED
 | GET | `/docs/` | Embedded documentation (EN / UA / RU) |
 | GET | `/admin/` | Admin dashboard UI |
 
-**Authentication:** when enabled (`SCHEDULER_API_KEY_REQUIRED` or any key set), protected routes require `Authorization: Bearer <key>` or `X-API-Key`. Roles: client (`/jobs*`, `/presets`), worker (`/workers/*`), admin (all protected routes + `/admin/api/*`). Public without key: `/health`, `/docs/`, `/admin/` UI shell.
+**Authentication:** when enabled (`SCHEDULER_API_KEY_REQUIRED` or any key set), protected routes require `Authorization: Bearer <key>` or `X-API-Key`. Roles: client (`/jobs*`, `/presets`), worker (`/workers/*`), admin (all protected routes + `/admin/api/*`). Public without key: `/health`, `/ready`, `/docs/`, `/admin/` UI shell.
 
 Full request/response examples, env vars, Docker setup, and tests: see **[/docs/](http://localhost:8080/docs/)**.
 

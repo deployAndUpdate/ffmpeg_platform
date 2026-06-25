@@ -16,10 +16,18 @@ import (
 )
 
 type mockObjectStorage struct {
-	bucket      string
-	existsFn    func(ctx context.Context, key string) (bool, error)
-	presignPut  func(ctx context.Context, key string, expiry time.Duration) (string, error)
-	presignGet  func(ctx context.Context, key string, expiry time.Duration) (string, error)
+	bucket        string
+	healthCheckFn func(ctx context.Context) error
+	existsFn      func(ctx context.Context, key string) (bool, error)
+	presignPut    func(ctx context.Context, key string, expiry time.Duration) (string, error)
+	presignGet    func(ctx context.Context, key string, expiry time.Duration) (string, error)
+}
+
+func (m *mockObjectStorage) HealthCheck(ctx context.Context) error {
+	if m.healthCheckFn != nil {
+		return m.healthCheckFn(ctx)
+	}
+	return nil
 }
 
 func (m *mockObjectStorage) Bucket() string { return m.bucket }
