@@ -30,18 +30,30 @@ func (s *Server) handleJobsInit(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) initR2Job(w http.ResponseWriter, r *http.Request) {
 	type req struct {
-		FFmpegArgs     string `json:"ffmpeg_args"`
-		InputFilename  string `json:"input_filename"`
-		OutputExt      string `json:"output_ext"`
-		MaxAttempts    int    `json:"max_attempts"`
+		Preset        string `json:"preset"`
+		FFmpegArgs    string `json:"ffmpeg_args"`
+		InputFilename string `json:"input_filename"`
+		OutputExt     string `json:"output_ext"`
+		MaxAttempts   int    `json:"max_attempts"`
 	}
 	var body req
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "invalid json", http.StatusBadRequest)
 		return
 	}
-	if body.FFmpegArgs == "" || body.InputFilename == "" || body.OutputExt == "" {
-		http.Error(w, "ffmpeg_args, input_filename, output_ext are required", http.StatusBadRequest)
+	if body.InputFilename == "" || body.OutputExt == "" {
+		http.Error(w, "input_filename and output_ext are required", http.StatusBadRequest)
+		return
+	}
+	outputExt := sanitizeOutputExt(body.OutputExt)
+	if outputExt == "" || outputExt == "bin" {
+		http.Error(w, "output_ext is required", http.StatusBadRequest)
+		return
+	}
+	spec, err := resolveTranscodeSpec(body.Preset, body.FFmpegArgs, outputExt)
+	if err != nil {
+		status, msg := transcodeSpecHTTPError(err)
+		http.Error(w, msg, status)
 		return
 	}
 	if body.MaxAttempts <= 0 {
@@ -49,7 +61,6 @@ func (s *Server) initR2Job(w http.ResponseWriter, r *http.Request) {
 	}
 
 	inputExt := storage.ExtFromFilename(body.InputFilename)
-	outputExt := sanitizeOutputExt(body.OutputExt)
 
 	id := uuid.New().String()
 	inputKey := s.storage.InputObjectKey(id, inputExt)
@@ -71,7 +82,8 @@ func (s *Server) initR2Job(w http.ResponseWriter, r *http.Request) {
 		ID:          id,
 		InputPath:   inputKey,
 		OutputPath:  outputKey,
-		FFmpegArgs:  body.FFmpegArgs,
+		Preset:      spec.Preset,
+		FFmpegArgs:  spec.FFmpegArgs,
 		Storage:     types.StorageR2,
 		Status:      types.JobStatusNew,
 		Attempt:     0,
@@ -154,6 +166,7 @@ func (s *Server) jobResponse(ctx context.Context, job *types.Job) map[string]any
 		"id":                 job.ID,
 		"input_path":         job.InputPath,
 		"output_path":        job.OutputPath,
+		"preset":             job.Preset,
 		"ffmpeg_args":        job.FFmpegArgs,
 		"storage":            job.Storage,
 		"status":             job.Status,

@@ -15,6 +15,7 @@ services:
       - postgres_data:/var/lib/postgresql/data
       - ./db/migrations/001_init.sql:/docker-entrypoint-initdb.d/001_init.sql:ro
       - ./db/migrations/002_storage.sql:/docker-entrypoint-initdb.d/002_storage.sql:ro
+      - ./db/migrations/003_preset.sql:/docker-entrypoint-initdb.d/003_preset.sql:ro
       - ./docker/postgres/postgresql.conf:/etc/postgresql/postgresql.conf:ro
     command: ["postgres", "-c", "config_file=/etc/postgresql/postgresql.conf"]
     healthcheck:
@@ -47,6 +48,10 @@ services:
       R2_REGION: ${R2_REGION:-auto}
       R2_PRESIGN_UPLOAD_TTL: ${R2_PRESIGN_UPLOAD_TTL:-1h}
       R2_PRESIGN_DOWNLOAD_TTL: ${R2_PRESIGN_DOWNLOAD_TTL:-1h}
+      SCHEDULER_API_KEY_REQUIRED: ${SCHEDULER_API_KEY_REQUIRED:-false}
+      SCHEDULER_CLIENT_API_KEY: ${SCHEDULER_CLIENT_API_KEY:-}
+      SCHEDULER_WORKER_API_KEY: ${SCHEDULER_WORKER_API_KEY:-}
+      SCHEDULER_ADMIN_API_KEY: ${SCHEDULER_ADMIN_API_KEY:-}
     ports:
       - "${SCHEDULER_PORT:-8080}:8080"
     healthcheck:
@@ -69,6 +74,7 @@ services:
         condition: service_healthy
     environment:
       SCHEDULER_URL: http://scheduler:8080
+      SCHEDULER_WORKER_API_KEY: ${SCHEDULER_WORKER_API_KEY:-}
       WORKER_MAX_PARALLEL_JOBS: ${WORKER_MAX_PARALLEL_JOBS:-1}
       WORKER_GPU_AVAILABLE: ${WORKER_GPU_AVAILABLE:-false}
       WORKER_TEMP_DIR: ${WORKER_TEMP_DIR:-/tmp/jobs}

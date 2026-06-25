@@ -33,10 +33,17 @@ func (s *Server) createJobFromUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	preset := strings.TrimSpace(r.FormValue("preset"))
 	ffmpegArgs := strings.TrimSpace(r.FormValue("ffmpeg_args"))
 	outputExt := sanitizeOutputExt(r.FormValue("output_ext"))
-	if ffmpegArgs == "" || outputExt == "" {
-		http.Error(w, "ffmpeg_args and output_ext are required", http.StatusBadRequest)
+	if outputExt == "" || outputExt == "bin" {
+		http.Error(w, "output_ext is required", http.StatusBadRequest)
+		return
+	}
+	spec, err := resolveTranscodeSpec(preset, ffmpegArgs, outputExt)
+	if err != nil {
+		status, msg := transcodeSpecHTTPError(err)
+		http.Error(w, msg, status)
 		return
 	}
 
@@ -84,7 +91,8 @@ func (s *Server) createJobFromUpload(w http.ResponseWriter, r *http.Request) {
 		ID:          id,
 		InputPath:   inputKey,
 		OutputPath:  outputKey,
-		FFmpegArgs:  ffmpegArgs,
+		Preset:      spec.Preset,
+		FFmpegArgs:  spec.FFmpegArgs,
 		Storage:     types.StorageR2,
 		Status:      types.JobStatusQueued,
 		Attempt:     0,

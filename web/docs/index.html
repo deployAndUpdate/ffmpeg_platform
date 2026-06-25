@@ -411,6 +411,9 @@
       <h3><code>internal/worker</code></h3>
       <p data-i18n="components.workerPkg">Клиент scheduler API и основной цикл воркера: polling, запуск ffmpeg, отправка результата.</p>
 
+      <h3><code>internal/presets</code></h3>
+      <p data-i18n="components.presets">Реестр именованных профилей транскодирования: резолв preset → ffmpeg_args, валидация output_ext.</p>
+
       <h3><code>internal/ffmpeg</code></h3>
       <p data-i18n="components.ffmpeg">Обёртка над <code>exec ffmpeg</code>: сбор stdout/stderr построчно, проверка входного файла, создание директории для выхода.</p>
 
@@ -472,7 +475,8 @@
           <tr><td><code>id</code></td><td>UUID</td><td data-i18n="database.jobs.id">Идентификатор job</td></tr>
           <tr><td><code>input_path</code></td><td>TEXT</td><td data-i18n="database.jobs.input">Локальный путь (worker) или object key в R2</td></tr>
           <tr><td><code>output_path</code></td><td>TEXT</td><td data-i18n="database.jobs.output">Локальный путь или object key результата</td></tr>
-          <tr><td><code>ffmpeg_args</code></td><td>TEXT</td><td data-i18n="database.jobs.ffmpeg">Аргументы ffmpeg (без -i и output)</td></tr>
+          <tr><td><code>preset</code></td><td>TEXT</td><td data-i18n="database.jobs.preset">Имя preset (nullable для legacy job)</td></tr>
+          <tr><td><code>ffmpeg_args</code></td><td>TEXT</td><td data-i18n="database.jobs.ffmpeg">Snapshot аргументов ffmpeg (без -i и output), резолвится при создании</td></tr>
           <tr><td><code>storage</code></td><td>TEXT</td><td data-i18n="database.jobs.storage"><code>local</code> или <code>r2</code></td></tr>
           <tr><td><code>status</code></td><td>TEXT</td><td data-i18n="database.jobs.status">Статус жизненного цикла</td></tr>
           <tr><td><code>assigned_worker_id</code></td><td>UUID</td><td data-i18n="database.jobs.worker">Текущий воркер</td></tr>
@@ -489,6 +493,47 @@
     <section id="api">
       <h2 data-i18n="api.title">HTTP API</h2>
       <p data-i18n="api.intro">Базовый URL: <code>http://&lt;scheduler-host&gt;:8080</code>. JSON для локальных job; <code>multipart/form-data</code> для upload в R2 через <code>POST /jobs</code>.</p>
+
+      <h3 data-i18n="api.auth.title">Аутентификация</h3>
+      <p data-i18n="api.auth.intro">При включённой auth (env <code>SCHEDULER_API_KEY_REQUIRED=true</code> или задан хотя бы один ключ) защищённые endpoint'ы требуют API-ключ в заголовке <code>Authorization: Bearer &lt;key&gt;</code> или <code>X-API-Key</code>.</p>
+      <table>
+        <thead><tr><th data-i18n="api.auth.col.role">Роль</th><th data-i18n="api.auth.col.env">Переменная</th><th data-i18n="api.auth.col.routes">Маршруты</th></tr></thead>
+        <tbody>
+          <tr><td data-i18n="api.auth.client">Client</td><td><code>SCHEDULER_CLIENT_API_KEY</code></td><td><code>/jobs*</code>, <code>/presets</code></td></tr>
+          <tr><td data-i18n="api.auth.worker">Worker</td><td><code>SCHEDULER_WORKER_API_KEY</code></td><td><code>/workers/*</code></td></tr>
+          <tr><td data-i18n="api.auth.admin">Admin</td><td><code>SCHEDULER_ADMIN_API_KEY</code></td><td data-i18n="api.auth.adminRoutes">Все защищённые маршруты</td></tr>
+        </tbody>
+      </table>
+      <p data-i18n="api.auth.public">Без ключа: <code>GET /health</code>, <code>GET /docs/</code>.</p>
+      <p data-i18n="api.auth.errors"><code>401</code> — ключ отсутствует или неверный; <code>403</code> — ключ верный, но роль не подходит для маршрута.</p>
+      <pre><code>curl -s -X POST http://localhost:8080/jobs \
+  -H "Authorization: Bearer $SCHEDULER_CLIENT_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"input_path":"/in.mp4","output_path":"/out.mp4","preset":"h264_crf23"}'</code></pre>
+
+      <h3 data-i18n="api.presets.title">Presets</h3>
+      <p data-i18n="api.presets.intro">Именованные профили транскодирования. При создании job укажите <code>preset</code> — scheduler резолвит его в <code>ffmpeg_args</code> и сохраняет snapshot в БД. Поле <code>ffmpeg_args</code> в запросе по-прежнему поддерживается (deprecated): укажите <strong>либо</strong> <code>preset</code>, <strong>либо</strong> <code>ffmpeg_args</code>.</p>
+      <table>
+        <tr>
+          <td><span class="method method-get">GET</span> <code>/presets</code></td>
+          <td data-i18n="api.presets.list">Каталог доступных presets</td>
+        </tr>
+      </table>
+      <pre><code>{ "presets": [
+  { "id": "h264_crf23", "description": "H.264 video, CRF 23, medium x264 preset", "output_exts": ["mp4", "mkv"] },
+  { "id": "mp3_192k", "description": "Extract audio as MP3 192 kbps", "output_exts": ["mp3"] }
+] }</code></pre>
+      <table>
+        <thead><tr><th>ID</th><th data-i18n="api.presets.col.desc">Описание</th><th data-i18n="api.presets.col.exts">output_ext</th></tr></thead>
+        <tbody>
+          <tr><td><code>h264_crf23</code></td><td>H.264, CRF 23, medium</td><td>mp4, mkv</td></tr>
+          <tr><td><code>h264_crf28</code></td><td>H.264, CRF 28, fast</td><td>mp4, mkv</td></tr>
+          <tr><td><code>copy_video</code></td><td>Remux без перекодирования</td><td>mp4, mkv, webm</td></tr>
+          <tr><td><code>mp3_192k</code></td><td>MP3 192 kbps</td><td>mp3</td></tr>
+          <tr><td><code>mp3_128k</code></td><td>MP3 128 kbps</td><td>mp3</td></tr>
+          <tr><td><code>aac_128k</code></td><td>AAC 128 kbps</td><td>m4a, mp4</td></tr>
+        </tbody>
+      </table>
 
       <h3 data-i18n="api.health">Health</h3>
       <table>
@@ -527,10 +572,10 @@
       <pre><code>{
   "input_path": "/data/in/video.mp4",
   "output_path": "/data/out/video.mp4",
-  "ffmpeg_args": "-c:v libx264 -crf 23",
+  "preset": "h264_crf23",
   "max_attempts": 3
 }</code></pre>
-      <p data-i18n="api.jobs.postNote">JSON: обязательные поля <code>input_path</code>, <code>output_path</code>, <code>ffmpeg_args</code> (<code>storage: "local"</code>). Multipart (R2): поля <code>file</code>, <code>ffmpeg_args</code>, <code>output_ext</code> — scheduler загружает файл в bucket и сразу ставит job в <code>QUEUED</code>.</p>
+      <p data-i18n="api.jobs.postNote">JSON: обязательные <code>input_path</code>, <code>output_path</code> и <code>preset</code> или <code>ffmpeg_args</code> (<code>storage: "local"</code>). Multipart (R2): поля <code>file</code>, <code>output_ext</code> и <code>preset</code> или <code>ffmpeg_args</code> — scheduler загружает файл в bucket и сразу ставит job в <code>QUEUED</code>.</p>
 
       <h4 data-i18n="api.upload.title">POST /jobs — multipart upload (R2)</h4>
       <p data-i18n="api.upload.intro">Один запрос «отправил файл и забыл». Требует настроенный R2 на scheduler. Content-Type: <code>multipart/form-data</code>.</p>
@@ -538,14 +583,15 @@
         <thead><tr><th data-i18n="api.upload.col.field">Поле</th><th data-i18n="api.upload.col.desc">Описание</th></tr></thead>
         <tbody>
           <tr><td><code>file</code></td><td data-i18n="api.upload.file">Входной файл (видео/аудио)</td></tr>
-          <tr><td><code>ffmpeg_args</code></td><td data-i18n="api.upload.ffmpeg">Аргументы ffmpeg</td></tr>
+          <tr><td><code>preset</code></td><td data-i18n="api.upload.preset">Preset транскодирования (рекомендуется)</td></tr>
+          <tr><td><code>ffmpeg_args</code></td><td data-i18n="api.upload.ffmpeg">Аргументы ffmpeg (deprecated, альтернатива preset)</td></tr>
           <tr><td><code>output_ext</code></td><td data-i18n="api.upload.ext">Расширение результата, напр. <code>mp3</code></td></tr>
           <tr><td><code>max_attempts</code></td><td data-i18n="api.upload.attempts">Опционально, по умолчанию 3</td></tr>
         </tbody>
       </table>
       <pre><code>curl -s -X POST http://localhost:8080/jobs \
   -F "file=@/path/to/video.mp4" \
-  -F 'ffmpeg_args=-vn -acodec libmp3lame -b:a 192k' \
+  -F 'preset=mp3_192k' \
   -F 'output_ext=mp3' | jq
 
 # дождаться COMPLETED, затем download_url:
@@ -557,7 +603,7 @@ curl -s http://localhost:8080/jobs/JOB_ID | jq '{status, download_url}'</code></
 
       <p data-i18n="api.r2.initBody"><strong>POST /jobs/init</strong> — тело запроса:</p>
       <pre><code>{
-  "ffmpeg_args": "-vn -acodec libmp3lame -b:a 192k",
+  "preset": "mp3_192k",
   "input_filename": "video.mp4",
   "output_ext": "mp3",
   "max_attempts": 3
@@ -567,7 +613,7 @@ curl -s http://localhost:8080/jobs/JOB_ID | jq '{status, download_url}'</code></
       <pre><code># 1. Создать job и получить upload URL
 curl -s -X POST http://localhost:8080/jobs/init \
   -H "Content-Type: application/json" \
-  -d '{"ffmpeg_args":"-vn -acodec libmp3lame -b:a 192k","input_filename":"video.mp4","output_ext":"mp3"}' | jq
+  -d '{"preset":"mp3_192k","input_filename":"video.mp4","output_ext":"mp3"}' | jq
 
 # 2. Загрузить файл в R2 (URL из upload_url)
 curl -X PUT "$UPLOAD_URL" --upload-file ./video.mp4
@@ -644,6 +690,10 @@ curl -s "http://localhost:8080/jobs/$JOB_ID" | jq '.download_url'</code></pre>
         <tbody>
           <tr><td><code>DB_DSN</code></td><td data-i18n="env.yes">да</td><td>—</td><td data-i18n="env.scheduler.db">PostgreSQL connection string</td></tr>
           <tr><td><code>SCHEDULER_ADDR</code></td><td data-i18n="env.no">нет</td><td><code>:8080</code></td><td data-i18n="env.scheduler.addr">Адрес HTTP-сервера</td></tr>
+          <tr><td><code>SCHEDULER_API_KEY_REQUIRED</code></td><td data-i18n="env.no">нет</td><td><code>false</code></td><td data-i18n="env.scheduler.authRequired"><code>true</code> — обязательны client и worker ключи</td></tr>
+          <tr><td><code>SCHEDULER_CLIENT_API_KEY</code></td><td data-i18n="env.no">нет*</td><td>—</td><td data-i18n="env.scheduler.clientKey">Ключ для <code>/jobs*</code></td></tr>
+          <tr><td><code>SCHEDULER_WORKER_API_KEY</code></td><td data-i18n="env.no">нет*</td><td>—</td><td data-i18n="env.scheduler.workerKey">Ключ для <code>/workers/*</code></td></tr>
+          <tr><td><code>SCHEDULER_ADMIN_API_KEY</code></td><td data-i18n="env.no">нет</td><td>—</td><td data-i18n="env.scheduler.adminKey">Опциональный admin-ключ (все защищённые маршруты)</td></tr>
           <tr><td><code>MAX_UPLOAD_BYTES</code></td><td data-i18n="env.no">нет</td><td><code>536870912</code></td><td data-i18n="env.scheduler.maxUpload">Макс. размер multipart upload (байты)</td></tr>
           <tr><td><code>SCHEDULER_UPLOAD_TIMEOUT</code></td><td data-i18n="env.no">нет</td><td><code>30m</code></td><td data-i18n="env.scheduler.uploadTimeout">Таймаут приёма файла через API</td></tr>
           <tr><td><code>REAPER_INTERVAL</code></td><td data-i18n="env.no">нет</td><td><code>30s</code></td><td data-i18n="env.reaper.interval">Интервал фонового reaper</td></tr>
@@ -657,6 +707,13 @@ curl -s "http://localhost:8080/jobs/$JOB_ID" | jq '.download_url'</code></pre>
           <tr><td><code>R2_PRESIGN_DOWNLOAD_TTL</code></td><td data-i18n="env.no">нет</td><td><code>1h</code></td><td data-i18n="env.r2.downloadTTL">Срок presigned GET</td></tr>
         </tbody>
       </table>
+      <p data-i18n="env.auth.note">* При <code>SCHEDULER_API_KEY_REQUIRED=true</code> обязательны <code>SCHEDULER_CLIENT_API_KEY</code> и <code>SCHEDULER_WORKER_API_KEY</code>. Auth включается также при задании любого из ключей.</p>
+      <h4 data-i18n="env.genKeys.title">Генерация API-ключей</h4>
+      <p data-i18n="env.genKeys.intro">Скрипт <code>scripts/gen-api-keys.sh</code> создаёт три случайных ключа через <code>openssl rand</code>. Вывод идёт в stdout — для prod скопируйте значения в secrets manager, не коммитьте их в репозиторий.</p>
+      <pre><code>./scripts/gen-api-keys.sh
+./scripts/gen-api-keys.sh --format=env
+./scripts/gen-api-keys.sh --format=export</code></pre>
+      <p data-i18n="env.genKeys.note">После смены ключей перезапустите scheduler и worker. Формат <code>--format=env</code> удобен для локального <code>.env</code>; <code>export</code> — для <code>source .env</code>.</p>
       <p data-i18n="env.r2.note">* Для R2-flow нужны вместе: <code>R2_BUCKET</code>, <code>R2_ACCESS_KEY_ID</code>, <code>R2_SECRET_ACCESS_KEY</code>, <code>R2_ENDPOINT</code> — на scheduler и worker.</p>
 
       <h3 data-i18n="env.worker">Worker (<code>cmd/worker</code>)</h3>
@@ -664,6 +721,7 @@ curl -s "http://localhost:8080/jobs/$JOB_ID" | jq '.download_url'</code></pre>
         <thead><tr><th data-i18n="env.col.var">Переменная</th><th data-i18n="env.col.required">Обязательна</th><th data-i18n="env.col.default">По умолчанию</th><th data-i18n="env.col.desc">Описание</th></tr></thead>
         <tbody>
           <tr><td><code>SCHEDULER_URL</code></td><td data-i18n="env.yes">да</td><td>—</td><td data-i18n="env.worker.url">URL scheduler, напр. <code>http://localhost:8080</code></td></tr>
+          <tr><td><code>SCHEDULER_WORKER_API_KEY</code></td><td data-i18n="env.no">нет*</td><td>—</td><td data-i18n="env.worker.apiKey">Worker API-ключ (если auth включена на scheduler)</td></tr>
           <tr><td><code>WORKER_ID</code></td><td data-i18n="env.no">нет</td><td>random UUID</td><td data-i18n="env.worker.id">ID воркера</td></tr>
           <tr><td><code>WORKER_HOSTNAME</code></td><td data-i18n="env.no">нет</td><td>os.Hostname()</td><td data-i18n="env.worker.hostname">Имя хоста</td></tr>
           <tr><td><code>WORKER_CPU_CORES</code></td><td data-i18n="env.no">нет</td><td>runtime.NumCPU()</td><td data-i18n="env.worker.cpu">Количество ядер</td></tr>
@@ -697,17 +755,19 @@ go run ./cmd/scheduler</code></pre>
         <li data-i18n="quickstart.step4">Запустить воркер (на машине с ffmpeg и доступом к файлам):</li>
       </ol>
       <pre><code>export SCHEDULER_URL="http://localhost:8080"
+export SCHEDULER_WORKER_API_KEY="your-worker-key"
 go run ./cmd/worker</code></pre>
 
       <ol start="5">
         <li data-i18n="quickstart.step5">Создать job:</li>
       </ol>
       <pre><code>curl -s -X POST http://localhost:8080/jobs \
+  -H "Authorization: Bearer $SCHEDULER_CLIENT_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
     "input_path": "/tmp/in.mp4",
     "output_path": "/tmp/out.mp4",
-    "ffmpeg_args": "-c:v libx264 -crf 28"
+    "preset": "h264_crf28"
   }' | jq</code></pre>
     </section>
 
@@ -761,7 +821,7 @@ curl -s -X POST http://localhost:8080/jobs \
   -d '{
     "input_path": "/data/in.mp4",
     "output_path": "/data/out.mp4",
-    "ffmpeg_args": "-c:v libx264 -crf 28"
+    "preset": "h264_crf28"
   }' | jq</code></pre>
 
       <h3 data-i18n="docker.images">Образы</h3>
@@ -792,12 +852,14 @@ docker compose down -v       # удалить volumes (данные БД и /dat
 ├── internal/
 │   ├── api/                # HTTP handlers + JobStore interface
 │   ├── ffmpeg/             # Запуск ffmpeg
+│   ├── presets/            # Каталог presets транскодирования
 │   ├── storage/            # Cloudflare R2 (S3 API)
 │   ├── store/              # PostgreSQL слой
 │   ├── testutil/           # Хелперы integration-тестов (build tag integration)
 │   ├── types/              # Доменные типы
 │   └── worker/             # Клиент API + цикл воркера
 ├── .github/workflows/      # GitHub Actions (CI на pull request)
+├── scripts/                # gen-api-keys.sh — генерация API-ключей
 ├── web/docs/               # HTML документация + embed
 ├── Dockerfile              # scheduler + worker targets
 ├── docker-compose.yml
@@ -849,8 +911,13 @@ make ci</code></pre>
           </tr>
           <tr>
             <td>Unit</td>
+            <td><code>internal/presets</code></td>
+            <td data-i18n="testing.presets">Resolve, List, ValidateOutputExt</td>
+          </tr>
+          <tr>
+            <td>Unit</td>
             <td><code>internal/api</code></td>
-            <td data-i18n="testing.api">Валидация HTTP, коды ответов (mock JobStore)</td>
+            <td data-i18n="testing.api">Валидация HTTP, presets, коды ответов (mock JobStore)</td>
           </tr>
           <tr>
             <td>Unit</td>
@@ -939,6 +1006,7 @@ make ci</code></pre>
         'components.store': 'Слой доступа к PostgreSQL: CRUD для jobs и workers, атомарная выдача заданий, запись логов в транзакции, reaper (<code>MarkStaleWorkersDead</code>, <code>ReapOrphanJobs</code>).',
         'components.reaper': 'Фоновый цикл в scheduler: помечает воркеров без heartbeat как <code>DEAD</code>, освобождает job с истёкшим lease или назначенные на <code>DEAD</code> воркеров.',
         'components.workerPkg': 'Клиент scheduler API и основной цикл воркера: polling, запуск ffmpeg, отправка результата.',
+        'components.presets': 'Реестр именованных профилей транскодирования: резолв preset → ffmpeg_args, валидация output_ext.',
         'components.ffmpeg': 'Обёртка над <code>exec ffmpeg</code>: сбор stdout/stderr построчно, проверка входного файла, создание директории для выхода.',
         'components.storage': 'Cloudflare R2 (S3-compatible): presigned upload/download, download/upload объектов для воркера.',
         'jobLifecycle.title': 'Жизненный цикл Job',
@@ -969,7 +1037,8 @@ make ci</code></pre>
         'database.jobs.id': 'Идентификатор job',
         'database.jobs.input': 'Локальный путь (worker) или object key в R2',
         'database.jobs.output': 'Локальный путь или object key результата',
-        'database.jobs.ffmpeg': 'Аргументы ffmpeg (без -i и output)',
+        'database.jobs.preset': 'Имя preset (nullable для legacy job)',
+        'database.jobs.ffmpeg': 'Snapshot аргументов ffmpeg (без -i и output), резолвится при создании',
         'database.jobs.storage': '<code>local</code> или <code>r2</code>',
         'database.jobs.status': 'Статус жизненного цикла',
         'database.jobs.worker': 'Текущий воркер',
@@ -979,21 +1048,38 @@ make ci</code></pre>
         'database.logsDesc': 'Строки stdout/stderr с таймштампом. Записываются при финализации job в транзакции с обновлением статуса.',
         'api.title': 'HTTP API',
         'api.intro': 'Базовый URL: <code>http://&lt;scheduler-host&gt;:8080</code>. JSON для локальных job; <code>multipart/form-data</code> для upload в R2 через <code>POST /jobs</code>.',
+        'api.auth.title': 'Аутентификация',
+        'api.auth.intro': 'При включённой auth (env <code>SCHEDULER_API_KEY_REQUIRED=true</code> или задан хотя бы один ключ) защищённые endpoint\'ы требуют API-ключ в заголовке <code>Authorization: Bearer &lt;key&gt;</code> или <code>X-API-Key</code>.',
+        'api.auth.col.role': 'Роль',
+        'api.auth.col.env': 'Переменная',
+        'api.auth.col.routes': 'Маршруты',
+        'api.auth.client': 'Client',
+        'api.auth.worker': 'Worker',
+        'api.auth.admin': 'Admin',
+        'api.auth.adminRoutes': 'Все защищённые маршруты',
+        'api.auth.public': 'Без ключа: <code>GET /health</code>, <code>GET /docs/</code>.',
+        'api.auth.errors': '<code>401</code> — ключ отсутствует или неверный; <code>403</code> — ключ верный, но роль не подходит для маршрута.',
         'api.health': 'Health',
         'api.healthDesc': 'Проверка доступности scheduler',
+        'api.presets.title': 'Presets',
+        'api.presets.intro': 'Именованные профили транскодирования. При создании job укажите <code>preset</code> — scheduler резолвит его в <code>ffmpeg_args</code> и сохраняет snapshot в БД. Поле <code>ffmpeg_args</code> в запросе по-прежнему поддерживается (deprecated): укажите <strong>либо</strong> <code>preset</code>, <strong>либо</strong> <code>ffmpeg_args</code>.',
+        'api.presets.list': 'Каталог доступных presets',
+        'api.presets.col.desc': 'Описание',
+        'api.presets.col.exts': 'output_ext',
         'api.jobs.init': 'Создать R2 job и получить presigned URL для upload',
         'api.jobs.submit': 'Подтвердить upload и поставить job в очередь',
         'api.jobs.create': 'Создать job: JSON (локальные пути) или multipart upload (R2)',
         'api.jobs.get': 'Получить job по ID',
         'api.jobs.logs': 'Логи stdout/stderr job (по попыткам, в порядке времени)',
         'api.jobs.postBody': '<strong>POST /jobs</strong> — тело запроса (JSON, локальный режим):',
-        'api.jobs.postNote': 'JSON: обязательные поля <code>input_path</code>, <code>output_path</code>, <code>ffmpeg_args</code> (<code>storage: "local"</code>). Multipart (R2): поля <code>file</code>, <code>ffmpeg_args</code>, <code>output_ext</code> — scheduler загружает файл в bucket и сразу ставит job в <code>QUEUED</code>.',
+        'api.jobs.postNote': 'JSON: обязательные <code>input_path</code>, <code>output_path</code> и <code>preset</code> или <code>ffmpeg_args</code> (<code>storage: "local"</code>). Multipart (R2): поля <code>file</code>, <code>output_ext</code> и <code>preset</code> или <code>ffmpeg_args</code> — scheduler загружает файл в bucket и сразу ставит job в <code>QUEUED</code>.',
         'api.upload.title': 'POST /jobs — multipart upload (R2)',
         'api.upload.intro': 'Один запрос «отправил файл и забыл». Требует настроенный R2 на scheduler. Content-Type: <code>multipart/form-data</code>.',
         'api.upload.col.field': 'Поле',
         'api.upload.col.desc': 'Описание',
         'api.upload.file': 'Входной файл (видео/аудио)',
-        'api.upload.ffmpeg': 'Аргументы ffmpeg',
+        'api.upload.preset': 'Preset транскодирования (рекомендуется)',
+        'api.upload.ffmpeg': 'Аргументы ffmpeg (deprecated, альтернатива preset)',
         'api.upload.ext': 'Расширение результата, напр. <code>mp3</code>',
         'api.upload.attempts': 'Опционально, по умолчанию 3',
         'api.upload.limit': 'Лимит размера: env <code>MAX_UPLOAD_BYTES</code> (по умолчанию 512 MiB). Таймаут upload: <code>SCHEDULER_UPLOAD_TIMEOUT</code> (по умолчанию 30m).',
@@ -1023,12 +1109,17 @@ make ci</code></pre>
         'env.no': 'нет',
         'env.scheduler.db': 'PostgreSQL connection string',
         'env.scheduler.addr': 'Адрес HTTP-сервера',
+        'env.scheduler.authRequired': '<code>true</code> — обязательны client и worker ключи',
+        'env.scheduler.clientKey': 'Ключ для <code>/jobs*</code>, <code>/presets</code>',
+        'env.scheduler.workerKey': 'Ключ для <code>/workers/*</code>',
+        'env.scheduler.adminKey': 'Опциональный admin-ключ (все защищённые маршруты)',
         'env.scheduler.maxUpload': 'Макс. размер multipart upload (байты)',
         'env.scheduler.uploadTimeout': 'Таймаут приёма файла через API',
         'env.reaper.interval': 'Интервал фонового reaper',
         'env.reaper.workerTimeout': 'Без heartbeat дольше этого — воркер <code>DEAD</code>',
         'env.reaper.enabled': '<code>false</code> или <code>0</code> — отключить reaper',
         'env.worker.url': 'URL scheduler, напр. <code>http://localhost:8080</code>',
+        'env.worker.apiKey': 'Worker API-ключ (если auth включена на scheduler)',
         'env.worker.id': 'ID воркера',
         'env.worker.hostname': 'Имя хоста',
         'env.worker.cpu': 'Количество ядер',
@@ -1044,6 +1135,10 @@ make ci</code></pre>
         'env.r2.uploadTTL': 'Срок presigned PUT',
         'env.r2.downloadTTL': 'Срок presigned GET',
         'env.r2.note': '* Для R2-flow нужны вместе: <code>R2_BUCKET</code>, <code>R2_ACCESS_KEY_ID</code>, <code>R2_SECRET_ACCESS_KEY</code>, <code>R2_ENDPOINT</code> — на scheduler и worker.',
+        'env.auth.note': '* При <code>SCHEDULER_API_KEY_REQUIRED=true</code> обязательны <code>SCHEDULER_CLIENT_API_KEY</code> и <code>SCHEDULER_WORKER_API_KEY</code>. Auth включается также при задании любого из ключей.',
+        'env.genKeys.title': 'Генерация API-ключей',
+        'env.genKeys.intro': 'Скрипт <code>scripts/gen-api-keys.sh</code> создаёт три случайных ключа через <code>openssl rand</code>. Вывод идёт в stdout — для prod скопируйте значения в secrets manager, не коммитьте их в репозиторий.',
+        'env.genKeys.note': 'После смены ключей перезапустите scheduler и worker. Формат <code>--format=env</code> удобен для локального <code>.env</code>; <code>export</code> — для <code>source .env</code>.',
         'env.r2.worker': 'Те же переменные, что у scheduler',
         'quickstart.title': 'Быстрый старт',
         'quickstart.intro': 'Рекомендуемый способ — <a href="#docker">Docker Compose</a>. Ниже — локальный запуск без контейнеров.',
@@ -1088,7 +1183,8 @@ make ci</code></pre>
         'testing.col.package': 'Пакет',
         'testing.col.checks': 'Что проверяет',
         'testing.ffmpeg': '<code>splitArgs</code>, <code>buildArgs</code>, проверка путей in/out',
-        'testing.api': 'Валидация HTTP, коды ответов (mock <code>JobStore</code>)',
+        'testing.presets': 'Resolve, List, ValidateOutputExt',
+        'testing.api': 'Валидация HTTP, presets, коды ответов (mock <code>JobStore</code>)',
         'testing.worker': 'HTTP-клиент scheduler (<code>httptest.Server</code>)',
         'testing.store': 'Очередь, SKIP LOCKED, lease, retry/failed, reaper, логи',
         'testing.reaper': 'Тик reaper, отмена по context (mock Store)',
@@ -1140,6 +1236,7 @@ make ci</code></pre>
         'components.store': 'PostgreSQL access layer: CRUD for jobs and workers, atomic dispatch, transactional log writes, reaper (<code>MarkStaleWorkersDead</code>, <code>ReapOrphanJobs</code>).',
         'components.reaper': 'Background loop in scheduler: marks workers without heartbeat as <code>DEAD</code>, releases jobs with expired lease or assigned to <code>DEAD</code> workers.',
         'components.workerPkg': 'Scheduler API client and worker loop: polling, ffmpeg execution, result upload.',
+        'components.presets': 'Named transcode preset registry: resolve preset → ffmpeg_args, validate output_ext.',
         'components.ffmpeg': 'Wrapper around <code>exec ffmpeg</code>: line-by-line stdout/stderr capture, input validation, output directory creation.',
         'components.storage': 'Cloudflare R2 (S3-compatible): presigned upload/download, object download/upload for workers.',
         'jobLifecycle.title': 'Job lifecycle',
@@ -1170,7 +1267,8 @@ make ci</code></pre>
         'database.jobs.id': 'Job identifier',
         'database.jobs.input': 'Local worker path or R2 object key',
         'database.jobs.output': 'Local path or output object key',
-        'database.jobs.ffmpeg': 'ffmpeg args (without -i and output)',
+        'database.jobs.preset': 'Preset name (nullable for legacy jobs)',
+        'database.jobs.ffmpeg': 'Resolved ffmpeg args snapshot (without -i and output), set at job creation',
         'database.jobs.storage': '<code>local</code> or <code>r2</code>',
         'database.jobs.status': 'Lifecycle status',
         'database.jobs.worker': 'Current worker',
@@ -1180,21 +1278,38 @@ make ci</code></pre>
         'database.logsDesc': 'stdout/stderr lines with timestamps. Written on job finalization in a transaction with status update.',
         'api.title': 'HTTP API',
         'api.intro': 'Base URL: <code>http://&lt;scheduler-host&gt;:8080</code>. JSON for local jobs; <code>multipart/form-data</code> for R2 upload via <code>POST /jobs</code>.',
+        'api.auth.title': 'Authentication',
+        'api.auth.intro': 'When auth is enabled (<code>SCHEDULER_API_KEY_REQUIRED=true</code> or any key is set), protected endpoints require an API key in <code>Authorization: Bearer &lt;key&gt;</code> or <code>X-API-Key</code>.',
+        'api.auth.col.role': 'Role',
+        'api.auth.col.env': 'Variable',
+        'api.auth.col.routes': 'Routes',
+        'api.auth.client': 'Client',
+        'api.auth.worker': 'Worker',
+        'api.auth.admin': 'Admin',
+        'api.auth.adminRoutes': 'All protected routes',
+        'api.auth.public': 'No key required: <code>GET /health</code>, <code>GET /docs/</code>.',
+        'api.auth.errors': '<code>401</code> — missing or invalid key; <code>403</code> — valid key but wrong role for the route.',
         'api.health': 'Health',
         'api.healthDesc': 'Scheduler availability check',
+        'api.presets.title': 'Presets',
+        'api.presets.intro': 'Named transcode profiles. When creating a job, set <code>preset</code> — the scheduler resolves it to <code>ffmpeg_args</code> and stores a snapshot in the DB. Request field <code>ffmpeg_args</code> is still supported (deprecated): specify <strong>either</strong> <code>preset</code> <strong>or</strong> <code>ffmpeg_args</code>.',
+        'api.presets.list': 'Catalog of available presets',
+        'api.presets.col.desc': 'Description',
+        'api.presets.col.exts': 'output_ext',
         'api.jobs.init': 'Create R2 job and get presigned upload URL',
         'api.jobs.submit': 'Confirm upload and queue the job',
         'api.jobs.create': 'Create job: JSON (local paths) or multipart upload (R2)',
         'api.jobs.get': 'Get job by ID',
         'api.jobs.logs': 'Job stdout/stderr logs (by attempt, chronological)',
         'api.jobs.postBody': '<strong>POST /jobs</strong> — request body (JSON, local mode):',
-        'api.jobs.postNote': 'JSON: required <code>input_path</code>, <code>output_path</code>, <code>ffmpeg_args</code> (<code>storage: "local"</code>). Multipart (R2): fields <code>file</code>, <code>ffmpeg_args</code>, <code>output_ext</code> — scheduler uploads to bucket and queues job immediately.',
+        'api.jobs.postNote': 'JSON: required <code>input_path</code>, <code>output_path</code>, and <code>preset</code> or <code>ffmpeg_args</code> (<code>storage: "local"</code>). Multipart (R2): fields <code>file</code>, <code>output_ext</code>, and <code>preset</code> or <code>ffmpeg_args</code> — scheduler uploads to bucket and queues job immediately.',
         'api.upload.title': 'POST /jobs — multipart upload (R2)',
         'api.upload.intro': 'Single-request upload when R2 is configured. Content-Type: <code>multipart/form-data</code>.',
         'api.upload.col.field': 'Field',
         'api.upload.col.desc': 'Description',
         'api.upload.file': 'Input file (video/audio)',
-        'api.upload.ffmpeg': 'ffmpeg arguments',
+        'api.upload.preset': 'Transcode preset (recommended)',
+        'api.upload.ffmpeg': 'ffmpeg arguments (deprecated, alternative to preset)',
         'api.upload.ext': 'Output extension, e.g. <code>mp3</code>',
         'api.upload.attempts': 'Optional, default 3',
         'api.upload.limit': 'Size limit: env <code>MAX_UPLOAD_BYTES</code> (default 512 MiB). Upload timeout: <code>SCHEDULER_UPLOAD_TIMEOUT</code> (default 30m).',
@@ -1224,12 +1339,17 @@ make ci</code></pre>
         'env.no': 'no',
         'env.scheduler.db': 'PostgreSQL connection string',
         'env.scheduler.addr': 'HTTP server address',
+        'env.scheduler.authRequired': '<code>true</code> — client and worker keys are required',
+        'env.scheduler.clientKey': 'Key for <code>/jobs*</code>, <code>/presets</code>',
+        'env.scheduler.workerKey': 'Key for <code>/workers/*</code>',
+        'env.scheduler.adminKey': 'Optional admin key (all protected routes)',
         'env.scheduler.maxUpload': 'Max multipart upload size (bytes)',
         'env.scheduler.uploadTimeout': 'API file upload timeout',
         'env.reaper.interval': 'Background reaper interval',
         'env.reaper.workerTimeout': 'No heartbeat for longer than this marks worker <code>DEAD</code>',
         'env.reaper.enabled': '<code>false</code> or <code>0</code> disables reaper',
         'env.worker.url': 'Scheduler URL, e.g. <code>http://localhost:8080</code>',
+        'env.worker.apiKey': 'Worker API key (when auth is enabled on scheduler)',
         'env.worker.id': 'Worker ID',
         'env.worker.hostname': 'Hostname',
         'env.worker.cpu': 'CPU core count',
@@ -1245,6 +1365,10 @@ make ci</code></pre>
         'env.r2.uploadTTL': 'Presigned PUT lifetime',
         'env.r2.downloadTTL': 'Presigned GET lifetime',
         'env.r2.note': '* R2 flow requires <code>R2_BUCKET</code>, <code>R2_ACCESS_KEY_ID</code>, <code>R2_SECRET_ACCESS_KEY</code>, and <code>R2_ENDPOINT</code> on both scheduler and worker.',
+        'env.auth.note': '* When <code>SCHEDULER_API_KEY_REQUIRED=true</code>, <code>SCHEDULER_CLIENT_API_KEY</code> and <code>SCHEDULER_WORKER_API_KEY</code> are required. Auth is also enabled when any key is set.',
+        'env.genKeys.title': 'Generating API keys',
+        'env.genKeys.intro': 'Script <code>scripts/gen-api-keys.sh</code> creates three random keys via <code>openssl rand</code>. Output goes to stdout — for production, copy values into a secrets manager; do not commit them.',
+        'env.genKeys.note': 'Restart scheduler and worker after changing keys. Use <code>--format=env</code> for a local <code>.env</code> file; <code>export</code> for <code>source .env</code>.',
         'env.r2.worker': 'Same variables as scheduler',
         'quickstart.title': 'Quick start',
         'quickstart.intro': 'Recommended: <a href="#docker">Docker Compose</a>. Below — local run without containers.',
@@ -1289,7 +1413,8 @@ make ci</code></pre>
         'testing.col.package': 'Package',
         'testing.col.checks': 'What it verifies',
         'testing.ffmpeg': '<code>splitArgs</code>, <code>buildArgs</code>, input/output path checks',
-        'testing.api': 'HTTP validation, response codes (mock <code>JobStore</code>)',
+        'testing.presets': 'Resolve, List, ValidateOutputExt',
+        'testing.api': 'HTTP validation, presets, response codes (mock <code>JobStore</code>)',
         'testing.worker': 'Scheduler HTTP client (<code>httptest.Server</code>)',
         'testing.store': 'Queue, SKIP LOCKED, lease, retry/failed, reaper, logs',
         'testing.reaper': 'Reaper tick, context cancellation (mock Store)',
@@ -1341,6 +1466,7 @@ make ci</code></pre>
         'components.store': 'Шар доступу до PostgreSQL: CRUD для jobs і workers, атомарна видача завдань, запис логів у транзакції, reaper (<code>MarkStaleWorkersDead</code>, <code>ReapOrphanJobs</code>).',
         'components.reaper': 'Фоновий цикл у scheduler: позначає воркерів без heartbeat як <code>DEAD</code>, звільняє job з простроченим lease або призначені на <code>DEAD</code> воркерів.',
         'components.workerPkg': 'Клієнт scheduler API та основний цикл воркера: polling, запуск ffmpeg, надсилання результату.',
+        'components.presets': 'Реєстр іменованих профілів транскодування: резолв preset → ffmpeg_args, валідація output_ext.',
         'components.ffmpeg': 'Обгортка над <code>exec ffmpeg</code>: збір stdout/stderr по рядках, перевірка вхідного файлу, створення директорії для виходу.',
         'components.storage': 'Cloudflare R2 (S3-compatible): presigned upload/download, download/upload об\'єктів для воркера.',
         'jobLifecycle.title': 'Життєвий цикл Job',
@@ -1371,7 +1497,8 @@ make ci</code></pre>
         'database.jobs.id': 'Ідентифікатор job',
         'database.jobs.input': 'Локальний шлях (worker) або object key в R2',
         'database.jobs.output': 'Локальний шлях або object key результату',
-        'database.jobs.ffmpeg': 'Аргументи ffmpeg (без -i та output)',
+        'database.jobs.preset': 'Ім\'я preset (nullable для legacy job)',
+        'database.jobs.ffmpeg': 'Snapshot аргументів ffmpeg (без -i та output), резолвиться при створенні',
         'database.jobs.storage': '<code>local</code> або <code>r2</code>',
         'database.jobs.status': 'Статус життєвого циклу',
         'database.jobs.worker': 'Поточний воркер',
@@ -1381,21 +1508,38 @@ make ci</code></pre>
         'database.logsDesc': 'Рядки stdout/stderr з міткою часу. Записуються при фіналізації job у транзакції з оновленням статусу.',
         'api.title': 'HTTP API',
         'api.intro': 'Базовий URL: <code>http://&lt;scheduler-host&gt;:8080</code>. JSON для локальних job; <code>multipart/form-data</code> для upload у R2 через <code>POST /jobs</code>.',
+        'api.auth.title': 'Аутентифікація',
+        'api.auth.intro': 'Коли auth увімкнена (<code>SCHEDULER_API_KEY_REQUIRED=true</code> або задано хоча б один ключ), захищені endpoint\'и вимагають API-ключ у заголовку <code>Authorization: Bearer &lt;key&gt;</code> або <code>X-API-Key</code>.',
+        'api.auth.col.role': 'Роль',
+        'api.auth.col.env': 'Змінна',
+        'api.auth.col.routes': 'Маршрути',
+        'api.auth.client': 'Client',
+        'api.auth.worker': 'Worker',
+        'api.auth.admin': 'Admin',
+        'api.auth.adminRoutes': 'Усі захищені маршрути',
+        'api.auth.public': 'Без ключа: <code>GET /health</code>, <code>GET /docs/</code>.',
+        'api.auth.errors': '<code>401</code> — ключ відсутній або невірний; <code>403</code> — ключ вірний, але роль не підходить для маршруту.',
         'api.health': 'Health',
         'api.healthDesc': 'Перевірка доступності scheduler',
+        'api.presets.title': 'Presets',
+        'api.presets.intro': 'Іменовані профілі транскодування. При створенні job вкажіть <code>preset</code> — scheduler резолвить його в <code>ffmpeg_args</code> і зберігає snapshot у БД. Поле <code>ffmpeg_args</code> у запиті підтримується (deprecated): вкажіть <strong>або</strong> <code>preset</code>, <strong>або</strong> <code>ffmpeg_args</code>.',
+        'api.presets.list': 'Каталог доступних presets',
+        'api.presets.col.desc': 'Опис',
+        'api.presets.col.exts': 'output_ext',
         'api.jobs.init': 'Створити R2 job і отримати presigned URL для upload',
         'api.jobs.submit': 'Підтвердити upload і поставити job у чергу',
         'api.jobs.create': 'Створити job: JSON (локальні шляхи) або multipart upload (R2)',
         'api.jobs.get': 'Отримати job за ID',
         'api.jobs.logs': 'Логи stdout/stderr job (за спробами, у хронологічному порядку)',
         'api.jobs.postBody': '<strong>POST /jobs</strong> — тіло запиту (JSON, локальний режим):',
-        'api.jobs.postNote': 'JSON: обов\'язкові <code>input_path</code>, <code>output_path</code>, <code>ffmpeg_args</code> (<code>storage: "local"</code>). Multipart (R2): поля <code>file</code>, <code>ffmpeg_args</code>, <code>output_ext</code> — scheduler завантажує файл у bucket і одразу ставить job у <code>QUEUED</code>.',
+        'api.jobs.postNote': 'JSON: обов\'язкові <code>input_path</code>, <code>output_path</code> та <code>preset</code> або <code>ffmpeg_args</code> (<code>storage: "local"</code>). Multipart (R2): поля <code>file</code>, <code>output_ext</code> та <code>preset</code> або <code>ffmpeg_args</code> — scheduler завантажує файл у bucket і одразу ставить job у <code>QUEUED</code>.',
         'api.upload.title': 'POST /jobs — multipart upload (R2)',
         'api.upload.intro': 'Один запит «надіслав файл і забув». Потрібен R2 на scheduler. Content-Type: <code>multipart/form-data</code>.',
         'api.upload.col.field': 'Поле',
         'api.upload.col.desc': 'Опис',
         'api.upload.file': 'Вхідний файл (відео/аудіо)',
-        'api.upload.ffmpeg': 'Аргументи ffmpeg',
+        'api.upload.preset': 'Preset транскодування (рекомендується)',
+        'api.upload.ffmpeg': 'Аргументи ffmpeg (deprecated, альтернатива preset)',
         'api.upload.ext': 'Розширення результату, напр. <code>mp3</code>',
         'api.upload.attempts': 'Опціонально, за замовчуванням 3',
         'api.upload.limit': 'Ліміт розміру: env <code>MAX_UPLOAD_BYTES</code> (за замовчуванням 512 MiB). Таймаут upload: <code>SCHEDULER_UPLOAD_TIMEOUT</code> (за замовчуванням 30m).',
@@ -1425,12 +1569,17 @@ make ci</code></pre>
         'env.no': 'ні',
         'env.scheduler.db': 'PostgreSQL connection string',
         'env.scheduler.addr': 'Адреса HTTP-сервера',
+        'env.scheduler.authRequired': '<code>true</code> — обов\'язкові client і worker ключі',
+        'env.scheduler.clientKey': 'Ключ для <code>/jobs*</code>, <code>/presets</code>',
+        'env.scheduler.workerKey': 'Ключ для <code>/workers/*</code>',
+        'env.scheduler.adminKey': 'Опціональний admin-ключ (усі захищені маршрути)',
         'env.scheduler.maxUpload': 'Макс. розмір multipart upload (байти)',
         'env.scheduler.uploadTimeout': 'Таймаут прийому файлу через API',
         'env.reaper.interval': 'Інтервал фонового reaper',
         'env.reaper.workerTimeout': 'Без heartbeat довше цього — воркер <code>DEAD</code>',
         'env.reaper.enabled': '<code>false</code> або <code>0</code> — вимкнути reaper',
         'env.worker.url': 'URL scheduler, напр. <code>http://localhost:8080</code>',
+        'env.worker.apiKey': 'Worker API-ключ (якщо auth увімкнена на scheduler)',
         'env.worker.id': 'ID воркера',
         'env.worker.hostname': "Ім'я хоста",
         'env.worker.cpu': 'Кількість ядер',
@@ -1446,6 +1595,10 @@ make ci</code></pre>
         'env.r2.uploadTTL': 'Термін presigned PUT',
         'env.r2.downloadTTL': 'Термін presigned GET',
         'env.r2.note': '* Для R2-flow потрібні разом: <code>R2_BUCKET</code>, <code>R2_ACCESS_KEY_ID</code>, <code>R2_SECRET_ACCESS_KEY</code>, <code>R2_ENDPOINT</code> — на scheduler і worker.',
+        'env.auth.note': '* При <code>SCHEDULER_API_KEY_REQUIRED=true</code> обов\'язкові <code>SCHEDULER_CLIENT_API_KEY</code> і <code>SCHEDULER_WORKER_API_KEY</code>. Auth також увімкнена при заданні будь-якого ключа.',
+        'env.genKeys.title': 'Генерація API-ключів',
+        'env.genKeys.intro': 'Скрипт <code>scripts/gen-api-keys.sh</code> створює три випадкові ключі через <code>openssl rand</code>. Вивід у stdout — для prod скопіюйте значення в secrets manager, не комітьте їх у репозиторій.',
+        'env.genKeys.note': 'Після зміни ключів перезапустіть scheduler і worker. Формат <code>--format=env</code> зручний для локального <code>.env</code>; <code>export</code> — для <code>source .env</code>.',
         'env.r2.worker': 'Ті самі змінні, що у scheduler',
         'quickstart.title': 'Швидкий старт',
         'quickstart.intro': 'Рекомендований спосіб — <a href="#docker">Docker Compose</a>. Нижче — локальний запуск без контейнерів.',
@@ -1490,7 +1643,8 @@ make ci</code></pre>
         'testing.col.package': 'Пакет',
         'testing.col.checks': 'Що перевіряє',
         'testing.ffmpeg': '<code>splitArgs</code>, <code>buildArgs</code>, перевірка шляхів in/out',
-        'testing.api': 'Валідація HTTP, коди відповідей (mock <code>JobStore</code>)',
+        'testing.presets': 'Resolve, List, ValidateOutputExt',
+        'testing.api': 'Валідація HTTP, presets, коди відповідей (mock <code>JobStore</code>)',
         'testing.worker': 'HTTP-клієнт scheduler (<code>httptest.Server</code>)',
         'testing.store': 'Черга, SKIP LOCKED, lease, retry/failed, reaper, логи',
         'testing.reaper': 'Тік reaper, скасування по context (mock Store)',
