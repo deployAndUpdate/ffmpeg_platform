@@ -1,5 +1,4 @@
 -- Base schema for distributed video compression platform
--- Idempotency note: rely on migration tool to run once; no IF NOT EXISTS
 
 -- Worker status and job status kept as constrained text to avoid custom enum migrations
 
@@ -39,13 +38,11 @@ CREATE TABLE job_logs (
     line TEXT NOT NULL
 );
 
--- Useful indexes
 CREATE INDEX idx_jobs_status ON jobs (status);
 CREATE INDEX idx_jobs_assigned_worker ON jobs (assigned_worker_id);
 CREATE INDEX idx_jobs_lease ON jobs (lease_expires_at);
 CREATE INDEX idx_job_logs_job_id_ts ON job_logs (job_id, ts);
 
--- Simple trigger to keep updated_at fresh
 CREATE OR REPLACE FUNCTION set_updated_at()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -63,5 +60,3 @@ CREATE TRIGGER trg_jobs_updated_at
 BEFORE UPDATE ON jobs
 FOR EACH ROW
 EXECUTE PROCEDURE set_updated_at();
-
-

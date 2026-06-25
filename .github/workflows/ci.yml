@@ -46,6 +46,7 @@ jobs:
         run: |
           CGO_ENABLED=0 go build -trimpath -o /dev/null ./cmd/scheduler
           CGO_ENABLED=0 go build -trimpath -o /dev/null ./cmd/worker
+          CGO_ENABLED=0 go build -trimpath -o /dev/null ./cmd/migrate
 
   integration-tests:
     runs-on: ubuntu-latest
@@ -72,5 +73,7 @@ jobs:
         with:
           go-version: "1.22.x"
           cache: true
+      - name: apply migrations
+        run: DB_DSN=$TEST_DB_DSN go run ./cmd/migrate up
       - name: integration tests
-        run: go test -race -count=1 -p 1 -tags=integration ./internal/store/... ./internal/api/...
+        run: go test -race -count=1 -p 1 -tags=integration ./internal/migrate/... ./internal/store/... ./internal/api/...

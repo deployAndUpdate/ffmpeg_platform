@@ -15,7 +15,7 @@ Documentation: [http://localhost:8080/docs/](http://localhost:8080/docs/) (EN / 
 
 **Local (without containers):**
 
-1. Start PostgreSQL and apply the migration: `psql "$DB_DSN" -f db/migrations/001_init.sql`
+1. Start PostgreSQL and apply migrations: `export DB_DSN=...; make migrate-up`
 2. Start the scheduler: `export DB_DSN=...; export SCHEDULER_ADDR=:8080; go run ./cmd/scheduler`
 3. Start a worker (machine with ffmpeg and file access): `export SCHEDULER_URL=http://localhost:8080; go run ./cmd/worker`
 
@@ -68,7 +68,6 @@ make ci                # full local CI suite
 
 ## Known limitations
 
-- No standalone migration tool (Docker applies init SQL on first postgres start)
 - GPU/CPU filters are not used when dispatching jobs
 
 ## Project layout
@@ -76,11 +75,13 @@ make ci                # full local CI suite
 ```
 cmd/scheduler/   HTTP API server
 cmd/worker/      ffmpeg worker
+cmd/migrate/     database migrations CLI
+internal/migrate/ migrator wrapper (golang-migrate)
 internal/api/    HTTP handlers
 internal/reaper/  background reaper loop
 internal/store/  PostgreSQL layer
 internal/worker/ worker client and loop
 internal/ffmpeg/ ffmpeg wrapper
 web/docs/        embedded HTML documentation
-db/migrations/   SQL schema
+db/migrations/   versioned SQL (.up.sql / .down.sql)
 ```

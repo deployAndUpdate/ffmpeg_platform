@@ -7,13 +7,12 @@ import (
 	"database/sql"
 	"net/url"
 	"os"
-	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"go_distributed_system/internal/migrate"
 	"go_distributed_system/internal/store"
 
 	_ "github.com/lib/pq"
@@ -37,8 +36,8 @@ func OpenStore(t *testing.T) (*store.Store, func()) {
 	assertTestDatabase(t, dsn)
 
 	migrateOnce.Do(func() {
-		if err := applyMigration(dsn); err != nil {
-			t.Fatalf("apply migration: %v", err)
+		if err := migrate.UpDSN(dsn); err != nil {
+			t.Fatalf("migrate up: %v", err)
 		}
 	})
 
@@ -70,64 +69,6 @@ func assertTestDatabase(t *testing.T, dsn string) {
 	}
 }
 
-func applyMigration(dsn string) error {
-	db, err := sql.Open("postgres", dsn)
-	if err != nil {
-		return err
-	}
-	defer db.Close()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	if err := execMigrationFile(ctx, db, "001_init.sql"); err != nil {
-		return err
-	}
-	if err := execMigrationFile(ctx, db, "002_storage.sql"); err != nil {
-		return err
-	}
-	return execMigrationFile(ctx, db, "003_preset.sql")
-}
-
-func execMigrationFile(ctx context.Context, db *sql.DB, name string) error {
-	columnChecks := map[string]string{
-		"002_storage.sql": "storage",
-		"003_preset.sql":  "preset",
-	}
-	if columnName, ok := columnChecks[name]; ok {
-		var exists bool
-		if err := db.QueryRowContext(ctx, `
-SELECT EXISTS (
-	SELECT FROM information_schema.columns
-	WHERE table_schema = 'public' AND table_name = 'jobs' AND column_name = $1
-)`, columnName).Scan(&exists); err != nil {
-			return err
-		}
-		if exists {
-			return nil
-		}
-	} else if name == "001_init.sql" {
-		var exists bool
-		if err := db.QueryRowContext(ctx, `
-SELECT EXISTS (
-	SELECT FROM information_schema.tables
-	WHERE table_schema = 'public' AND table_name = 'jobs'
-)`).Scan(&exists); err != nil {
-			return err
-		}
-		if exists {
-			return nil
-		}
-	}
-
-	sqlBytes, err := os.ReadFile(filepath.Join(migrationsDir(), name))
-	if err != nil {
-		return err
-	}
-	_, err = db.ExecContext(ctx, string(sqlBytes))
-	return err
-}
-
 func resetTables(ctx context.Context, dsn string) error {
 	db, err := sql.Open("postgres", dsn)
 	if err != nil {
@@ -137,12 +78,4 @@ func resetTables(ctx context.Context, dsn string) error {
 
 	_, err = db.ExecContext(ctx, `TRUNCATE job_logs, jobs, workers RESTART IDENTITY CASCADE`)
 	return err
-}
-
-func migrationsDir() string {
-	_, file, _, ok := runtime.Caller(0)
-	if !ok {
-		return "db/migrations"
-	}
-	return filepath.Join(filepath.Dir(file), "..", "..", "db", "migrations")
 }
