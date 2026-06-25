@@ -13,9 +13,6 @@ services:
       - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./db/migrations/001_init.sql:/docker-entrypoint-initdb.d/001_init.sql:ro
-      - ./db/migrations/002_storage.sql:/docker-entrypoint-initdb.d/002_storage.sql:ro
-      - ./db/migrations/003_preset.sql:/docker-entrypoint-initdb.d/003_preset.sql:ro
       - ./docker/postgres/postgresql.conf:/etc/postgresql/postgresql.conf:ro
     command: ["postgres", "-c", "config_file=/etc/postgresql/postgresql.conf"]
     healthcheck:
@@ -27,6 +24,20 @@ services:
     networks:
       - backend
 
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: migrate
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DB_DSN: postgres://${POSTGRES_USER:-video}:${POSTGRES_PASSWORD:-video}@postgres:5432/${POSTGRES_DB:-video}?sslmode=disable
+    networks:
+      - backend
+
   scheduler:
     build:
       context: .
@@ -34,6 +45,8 @@ services:
       target: scheduler
     restart: unless-stopped
     depends_on:
+      migrate:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
     environment:
