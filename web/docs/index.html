@@ -490,6 +490,23 @@
       <h2 data-i18n="api.title">HTTP API</h2>
       <p data-i18n="api.intro">Базовый URL: <code>http://&lt;scheduler-host&gt;:8080</code>. JSON для локальных job; <code>multipart/form-data</code> для upload в R2 через <code>POST /jobs</code>.</p>
 
+      <h3 data-i18n="api.auth.title">Аутентификация</h3>
+      <p data-i18n="api.auth.intro">При включённой auth (env <code>SCHEDULER_API_KEY_REQUIRED=true</code> или задан хотя бы один ключ) защищённые endpoint'ы требуют API-ключ в заголовке <code>Authorization: Bearer &lt;key&gt;</code> или <code>X-API-Key</code>.</p>
+      <table>
+        <thead><tr><th data-i18n="api.auth.col.role">Роль</th><th data-i18n="api.auth.col.env">Переменная</th><th data-i18n="api.auth.col.routes">Маршруты</th></tr></thead>
+        <tbody>
+          <tr><td data-i18n="api.auth.client">Client</td><td><code>SCHEDULER_CLIENT_API_KEY</code></td><td><code>/jobs*</code></td></tr>
+          <tr><td data-i18n="api.auth.worker">Worker</td><td><code>SCHEDULER_WORKER_API_KEY</code></td><td><code>/workers/*</code></td></tr>
+          <tr><td data-i18n="api.auth.admin">Admin</td><td><code>SCHEDULER_ADMIN_API_KEY</code></td><td data-i18n="api.auth.adminRoutes">Все защищённые маршруты</td></tr>
+        </tbody>
+      </table>
+      <p data-i18n="api.auth.public">Без ключа: <code>GET /health</code>, <code>GET /docs/</code>.</p>
+      <p data-i18n="api.auth.errors"><code>401</code> — ключ отсутствует или неверный; <code>403</code> — ключ верный, но роль не подходит для маршрута.</p>
+      <pre><code>curl -s -X POST http://localhost:8080/jobs \
+  -H "Authorization: Bearer $SCHEDULER_CLIENT_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"input_path":"/in.mp4","output_path":"/out.mp4","ffmpeg_args":"-c:v libx264"}'</code></pre>
+
       <h3 data-i18n="api.health">Health</h3>
       <table>
         <tr>
@@ -644,6 +661,10 @@ curl -s "http://localhost:8080/jobs/$JOB_ID" | jq '.download_url'</code></pre>
         <tbody>
           <tr><td><code>DB_DSN</code></td><td data-i18n="env.yes">да</td><td>—</td><td data-i18n="env.scheduler.db">PostgreSQL connection string</td></tr>
           <tr><td><code>SCHEDULER_ADDR</code></td><td data-i18n="env.no">нет</td><td><code>:8080</code></td><td data-i18n="env.scheduler.addr">Адрес HTTP-сервера</td></tr>
+          <tr><td><code>SCHEDULER_API_KEY_REQUIRED</code></td><td data-i18n="env.no">нет</td><td><code>false</code></td><td data-i18n="env.scheduler.authRequired"><code>true</code> — обязательны client и worker ключи</td></tr>
+          <tr><td><code>SCHEDULER_CLIENT_API_KEY</code></td><td data-i18n="env.no">нет*</td><td>—</td><td data-i18n="env.scheduler.clientKey">Ключ для <code>/jobs*</code></td></tr>
+          <tr><td><code>SCHEDULER_WORKER_API_KEY</code></td><td data-i18n="env.no">нет*</td><td>—</td><td data-i18n="env.scheduler.workerKey">Ключ для <code>/workers/*</code></td></tr>
+          <tr><td><code>SCHEDULER_ADMIN_API_KEY</code></td><td data-i18n="env.no">нет</td><td>—</td><td data-i18n="env.scheduler.adminKey">Опциональный admin-ключ (все защищённые маршруты)</td></tr>
           <tr><td><code>MAX_UPLOAD_BYTES</code></td><td data-i18n="env.no">нет</td><td><code>536870912</code></td><td data-i18n="env.scheduler.maxUpload">Макс. размер multipart upload (байты)</td></tr>
           <tr><td><code>SCHEDULER_UPLOAD_TIMEOUT</code></td><td data-i18n="env.no">нет</td><td><code>30m</code></td><td data-i18n="env.scheduler.uploadTimeout">Таймаут приёма файла через API</td></tr>
           <tr><td><code>REAPER_INTERVAL</code></td><td data-i18n="env.no">нет</td><td><code>30s</code></td><td data-i18n="env.reaper.interval">Интервал фонового reaper</td></tr>
@@ -657,6 +678,13 @@ curl -s "http://localhost:8080/jobs/$JOB_ID" | jq '.download_url'</code></pre>
           <tr><td><code>R2_PRESIGN_DOWNLOAD_TTL</code></td><td data-i18n="env.no">нет</td><td><code>1h</code></td><td data-i18n="env.r2.downloadTTL">Срок presigned GET</td></tr>
         </tbody>
       </table>
+      <p data-i18n="env.auth.note">* При <code>SCHEDULER_API_KEY_REQUIRED=true</code> обязательны <code>SCHEDULER_CLIENT_API_KEY</code> и <code>SCHEDULER_WORKER_API_KEY</code>. Auth включается также при задании любого из ключей.</p>
+      <h4 data-i18n="env.genKeys.title">Генерация API-ключей</h4>
+      <p data-i18n="env.genKeys.intro">Скрипт <code>scripts/gen-api-keys.sh</code> создаёт три случайных ключа через <code>openssl rand</code>. Вывод идёт в stdout — для prod скопируйте значения в secrets manager, не коммитьте их в репозиторий.</p>
+      <pre><code>./scripts/gen-api-keys.sh
+./scripts/gen-api-keys.sh --format=env
+./scripts/gen-api-keys.sh --format=export</code></pre>
+      <p data-i18n="env.genKeys.note">После смены ключей перезапустите scheduler и worker. Формат <code>--format=env</code> удобен для локального <code>.env</code>; <code>export</code> — для <code>source .env</code>.</p>
       <p data-i18n="env.r2.note">* Для R2-flow нужны вместе: <code>R2_BUCKET</code>, <code>R2_ACCESS_KEY_ID</code>, <code>R2_SECRET_ACCESS_KEY</code>, <code>R2_ENDPOINT</code> — на scheduler и worker.</p>
 
       <h3 data-i18n="env.worker">Worker (<code>cmd/worker</code>)</h3>
@@ -664,6 +692,7 @@ curl -s "http://localhost:8080/jobs/$JOB_ID" | jq '.download_url'</code></pre>
         <thead><tr><th data-i18n="env.col.var">Переменная</th><th data-i18n="env.col.required">Обязательна</th><th data-i18n="env.col.default">По умолчанию</th><th data-i18n="env.col.desc">Описание</th></tr></thead>
         <tbody>
           <tr><td><code>SCHEDULER_URL</code></td><td data-i18n="env.yes">да</td><td>—</td><td data-i18n="env.worker.url">URL scheduler, напр. <code>http://localhost:8080</code></td></tr>
+          <tr><td><code>SCHEDULER_WORKER_API_KEY</code></td><td data-i18n="env.no">нет*</td><td>—</td><td data-i18n="env.worker.apiKey">Worker API-ключ (если auth включена на scheduler)</td></tr>
           <tr><td><code>WORKER_ID</code></td><td data-i18n="env.no">нет</td><td>random UUID</td><td data-i18n="env.worker.id">ID воркера</td></tr>
           <tr><td><code>WORKER_HOSTNAME</code></td><td data-i18n="env.no">нет</td><td>os.Hostname()</td><td data-i18n="env.worker.hostname">Имя хоста</td></tr>
           <tr><td><code>WORKER_CPU_CORES</code></td><td data-i18n="env.no">нет</td><td>runtime.NumCPU()</td><td data-i18n="env.worker.cpu">Количество ядер</td></tr>
@@ -697,12 +726,14 @@ go run ./cmd/scheduler</code></pre>
         <li data-i18n="quickstart.step4">Запустить воркер (на машине с ffmpeg и доступом к файлам):</li>
       </ol>
       <pre><code>export SCHEDULER_URL="http://localhost:8080"
+export SCHEDULER_WORKER_API_KEY="your-worker-key"
 go run ./cmd/worker</code></pre>
 
       <ol start="5">
         <li data-i18n="quickstart.step5">Создать job:</li>
       </ol>
       <pre><code>curl -s -X POST http://localhost:8080/jobs \
+  -H "Authorization: Bearer $SCHEDULER_CLIENT_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
     "input_path": "/tmp/in.mp4",
@@ -798,6 +829,7 @@ docker compose down -v       # удалить volumes (данные БД и /dat
 │   ├── types/              # Доменные типы
 │   └── worker/             # Клиент API + цикл воркера
 ├── .github/workflows/      # GitHub Actions (CI на pull request)
+├── scripts/                # gen-api-keys.sh — генерация API-ключей
 ├── web/docs/               # HTML документация + embed
 ├── Dockerfile              # scheduler + worker targets
 ├── docker-compose.yml
@@ -979,6 +1011,17 @@ make ci</code></pre>
         'database.logsDesc': 'Строки stdout/stderr с таймштампом. Записываются при финализации job в транзакции с обновлением статуса.',
         'api.title': 'HTTP API',
         'api.intro': 'Базовый URL: <code>http://&lt;scheduler-host&gt;:8080</code>. JSON для локальных job; <code>multipart/form-data</code> для upload в R2 через <code>POST /jobs</code>.',
+        'api.auth.title': 'Аутентификация',
+        'api.auth.intro': 'При включённой auth (env <code>SCHEDULER_API_KEY_REQUIRED=true</code> или задан хотя бы один ключ) защищённые endpoint\'ы требуют API-ключ в заголовке <code>Authorization: Bearer &lt;key&gt;</code> или <code>X-API-Key</code>.',
+        'api.auth.col.role': 'Роль',
+        'api.auth.col.env': 'Переменная',
+        'api.auth.col.routes': 'Маршруты',
+        'api.auth.client': 'Client',
+        'api.auth.worker': 'Worker',
+        'api.auth.admin': 'Admin',
+        'api.auth.adminRoutes': 'Все защищённые маршруты',
+        'api.auth.public': 'Без ключа: <code>GET /health</code>, <code>GET /docs/</code>.',
+        'api.auth.errors': '<code>401</code> — ключ отсутствует или неверный; <code>403</code> — ключ верный, но роль не подходит для маршрута.',
         'api.health': 'Health',
         'api.healthDesc': 'Проверка доступности scheduler',
         'api.jobs.init': 'Создать R2 job и получить presigned URL для upload',
@@ -1023,12 +1066,17 @@ make ci</code></pre>
         'env.no': 'нет',
         'env.scheduler.db': 'PostgreSQL connection string',
         'env.scheduler.addr': 'Адрес HTTP-сервера',
+        'env.scheduler.authRequired': '<code>true</code> — обязательны client и worker ключи',
+        'env.scheduler.clientKey': 'Ключ для <code>/jobs*</code>',
+        'env.scheduler.workerKey': 'Ключ для <code>/workers/*</code>',
+        'env.scheduler.adminKey': 'Опциональный admin-ключ (все защищённые маршруты)',
         'env.scheduler.maxUpload': 'Макс. размер multipart upload (байты)',
         'env.scheduler.uploadTimeout': 'Таймаут приёма файла через API',
         'env.reaper.interval': 'Интервал фонового reaper',
         'env.reaper.workerTimeout': 'Без heartbeat дольше этого — воркер <code>DEAD</code>',
         'env.reaper.enabled': '<code>false</code> или <code>0</code> — отключить reaper',
         'env.worker.url': 'URL scheduler, напр. <code>http://localhost:8080</code>',
+        'env.worker.apiKey': 'Worker API-ключ (если auth включена на scheduler)',
         'env.worker.id': 'ID воркера',
         'env.worker.hostname': 'Имя хоста',
         'env.worker.cpu': 'Количество ядер',
@@ -1044,6 +1092,10 @@ make ci</code></pre>
         'env.r2.uploadTTL': 'Срок presigned PUT',
         'env.r2.downloadTTL': 'Срок presigned GET',
         'env.r2.note': '* Для R2-flow нужны вместе: <code>R2_BUCKET</code>, <code>R2_ACCESS_KEY_ID</code>, <code>R2_SECRET_ACCESS_KEY</code>, <code>R2_ENDPOINT</code> — на scheduler и worker.',
+        'env.auth.note': '* При <code>SCHEDULER_API_KEY_REQUIRED=true</code> обязательны <code>SCHEDULER_CLIENT_API_KEY</code> и <code>SCHEDULER_WORKER_API_KEY</code>. Auth включается также при задании любого из ключей.',
+        'env.genKeys.title': 'Генерация API-ключей',
+        'env.genKeys.intro': 'Скрипт <code>scripts/gen-api-keys.sh</code> создаёт три случайных ключа через <code>openssl rand</code>. Вывод идёт в stdout — для prod скопируйте значения в secrets manager, не коммитьте их в репозиторий.',
+        'env.genKeys.note': 'После смены ключей перезапустите scheduler и worker. Формат <code>--format=env</code> удобен для локального <code>.env</code>; <code>export</code> — для <code>source .env</code>.',
         'env.r2.worker': 'Те же переменные, что у scheduler',
         'quickstart.title': 'Быстрый старт',
         'quickstart.intro': 'Рекомендуемый способ — <a href="#docker">Docker Compose</a>. Ниже — локальный запуск без контейнеров.',
@@ -1180,6 +1232,17 @@ make ci</code></pre>
         'database.logsDesc': 'stdout/stderr lines with timestamps. Written on job finalization in a transaction with status update.',
         'api.title': 'HTTP API',
         'api.intro': 'Base URL: <code>http://&lt;scheduler-host&gt;:8080</code>. JSON for local jobs; <code>multipart/form-data</code> for R2 upload via <code>POST /jobs</code>.',
+        'api.auth.title': 'Authentication',
+        'api.auth.intro': 'When auth is enabled (<code>SCHEDULER_API_KEY_REQUIRED=true</code> or any key is set), protected endpoints require an API key in <code>Authorization: Bearer &lt;key&gt;</code> or <code>X-API-Key</code>.',
+        'api.auth.col.role': 'Role',
+        'api.auth.col.env': 'Variable',
+        'api.auth.col.routes': 'Routes',
+        'api.auth.client': 'Client',
+        'api.auth.worker': 'Worker',
+        'api.auth.admin': 'Admin',
+        'api.auth.adminRoutes': 'All protected routes',
+        'api.auth.public': 'No key required: <code>GET /health</code>, <code>GET /docs/</code>.',
+        'api.auth.errors': '<code>401</code> — missing or invalid key; <code>403</code> — valid key but wrong role for the route.',
         'api.health': 'Health',
         'api.healthDesc': 'Scheduler availability check',
         'api.jobs.init': 'Create R2 job and get presigned upload URL',
@@ -1224,12 +1287,17 @@ make ci</code></pre>
         'env.no': 'no',
         'env.scheduler.db': 'PostgreSQL connection string',
         'env.scheduler.addr': 'HTTP server address',
+        'env.scheduler.authRequired': '<code>true</code> — client and worker keys are required',
+        'env.scheduler.clientKey': 'Key for <code>/jobs*</code>',
+        'env.scheduler.workerKey': 'Key for <code>/workers/*</code>',
+        'env.scheduler.adminKey': 'Optional admin key (all protected routes)',
         'env.scheduler.maxUpload': 'Max multipart upload size (bytes)',
         'env.scheduler.uploadTimeout': 'API file upload timeout',
         'env.reaper.interval': 'Background reaper interval',
         'env.reaper.workerTimeout': 'No heartbeat for longer than this marks worker <code>DEAD</code>',
         'env.reaper.enabled': '<code>false</code> or <code>0</code> disables reaper',
         'env.worker.url': 'Scheduler URL, e.g. <code>http://localhost:8080</code>',
+        'env.worker.apiKey': 'Worker API key (when auth is enabled on scheduler)',
         'env.worker.id': 'Worker ID',
         'env.worker.hostname': 'Hostname',
         'env.worker.cpu': 'CPU core count',
@@ -1245,6 +1313,10 @@ make ci</code></pre>
         'env.r2.uploadTTL': 'Presigned PUT lifetime',
         'env.r2.downloadTTL': 'Presigned GET lifetime',
         'env.r2.note': '* R2 flow requires <code>R2_BUCKET</code>, <code>R2_ACCESS_KEY_ID</code>, <code>R2_SECRET_ACCESS_KEY</code>, and <code>R2_ENDPOINT</code> on both scheduler and worker.',
+        'env.auth.note': '* When <code>SCHEDULER_API_KEY_REQUIRED=true</code>, <code>SCHEDULER_CLIENT_API_KEY</code> and <code>SCHEDULER_WORKER_API_KEY</code> are required. Auth is also enabled when any key is set.',
+        'env.genKeys.title': 'Generating API keys',
+        'env.genKeys.intro': 'Script <code>scripts/gen-api-keys.sh</code> creates three random keys via <code>openssl rand</code>. Output goes to stdout — for production, copy values into a secrets manager; do not commit them.',
+        'env.genKeys.note': 'Restart scheduler and worker after changing keys. Use <code>--format=env</code> for a local <code>.env</code> file; <code>export</code> for <code>source .env</code>.',
         'env.r2.worker': 'Same variables as scheduler',
         'quickstart.title': 'Quick start',
         'quickstart.intro': 'Recommended: <a href="#docker">Docker Compose</a>. Below — local run without containers.',
@@ -1381,6 +1453,17 @@ make ci</code></pre>
         'database.logsDesc': 'Рядки stdout/stderr з міткою часу. Записуються при фіналізації job у транзакції з оновленням статусу.',
         'api.title': 'HTTP API',
         'api.intro': 'Базовий URL: <code>http://&lt;scheduler-host&gt;:8080</code>. JSON для локальних job; <code>multipart/form-data</code> для upload у R2 через <code>POST /jobs</code>.',
+        'api.auth.title': 'Аутентифікація',
+        'api.auth.intro': 'Коли auth увімкнена (<code>SCHEDULER_API_KEY_REQUIRED=true</code> або задано хоча б один ключ), захищені endpoint\'и вимагають API-ключ у заголовку <code>Authorization: Bearer &lt;key&gt;</code> або <code>X-API-Key</code>.',
+        'api.auth.col.role': 'Роль',
+        'api.auth.col.env': 'Змінна',
+        'api.auth.col.routes': 'Маршрути',
+        'api.auth.client': 'Client',
+        'api.auth.worker': 'Worker',
+        'api.auth.admin': 'Admin',
+        'api.auth.adminRoutes': 'Усі захищені маршрути',
+        'api.auth.public': 'Без ключа: <code>GET /health</code>, <code>GET /docs/</code>.',
+        'api.auth.errors': '<code>401</code> — ключ відсутній або невірний; <code>403</code> — ключ вірний, але роль не підходить для маршруту.',
         'api.health': 'Health',
         'api.healthDesc': 'Перевірка доступності scheduler',
         'api.jobs.init': 'Створити R2 job і отримати presigned URL для upload',
@@ -1425,12 +1508,17 @@ make ci</code></pre>
         'env.no': 'ні',
         'env.scheduler.db': 'PostgreSQL connection string',
         'env.scheduler.addr': 'Адреса HTTP-сервера',
+        'env.scheduler.authRequired': '<code>true</code> — обов\'язкові client і worker ключі',
+        'env.scheduler.clientKey': 'Ключ для <code>/jobs*</code>',
+        'env.scheduler.workerKey': 'Ключ для <code>/workers/*</code>',
+        'env.scheduler.adminKey': 'Опціональний admin-ключ (усі захищені маршрути)',
         'env.scheduler.maxUpload': 'Макс. розмір multipart upload (байти)',
         'env.scheduler.uploadTimeout': 'Таймаут прийому файлу через API',
         'env.reaper.interval': 'Інтервал фонового reaper',
         'env.reaper.workerTimeout': 'Без heartbeat довше цього — воркер <code>DEAD</code>',
         'env.reaper.enabled': '<code>false</code> або <code>0</code> — вимкнути reaper',
         'env.worker.url': 'URL scheduler, напр. <code>http://localhost:8080</code>',
+        'env.worker.apiKey': 'Worker API-ключ (якщо auth увімкнена на scheduler)',
         'env.worker.id': 'ID воркера',
         'env.worker.hostname': "Ім'я хоста",
         'env.worker.cpu': 'Кількість ядер',
@@ -1446,6 +1534,10 @@ make ci</code></pre>
         'env.r2.uploadTTL': 'Термін presigned PUT',
         'env.r2.downloadTTL': 'Термін presigned GET',
         'env.r2.note': '* Для R2-flow потрібні разом: <code>R2_BUCKET</code>, <code>R2_ACCESS_KEY_ID</code>, <code>R2_SECRET_ACCESS_KEY</code>, <code>R2_ENDPOINT</code> — на scheduler і worker.',
+        'env.auth.note': '* При <code>SCHEDULER_API_KEY_REQUIRED=true</code> обов\'язкові <code>SCHEDULER_CLIENT_API_KEY</code> і <code>SCHEDULER_WORKER_API_KEY</code>. Auth також увімкнена при заданні будь-якого ключа.',
+        'env.genKeys.title': 'Генерація API-ключів',
+        'env.genKeys.intro': 'Скрипт <code>scripts/gen-api-keys.sh</code> створює три випадкові ключі через <code>openssl rand</code>. Вивід у stdout — для prod скопіюйте значення в secrets manager, не комітьте їх у репозиторій.',
+        'env.genKeys.note': 'Після зміни ключів перезапустіть scheduler і worker. Формат <code>--format=env</code> зручний для локального <code>.env</code>; <code>export</code> — для <code>source .env</code>.',
         'env.r2.worker': 'Ті самі змінні, що у scheduler',
         'quickstart.title': 'Швидкий старт',
         'quickstart.intro': 'Рекомендований спосіб — <a href="#docker">Docker Compose</a>. Нижче — локальний запуск без контейнерів.',

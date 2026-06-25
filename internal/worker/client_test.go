@@ -42,6 +42,25 @@ func TestClientRegister(t *testing.T) {
 	}
 }
 
+func TestClientWithAPIKey(t *testing.T) {
+	const wantKey = "worker-secret"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		auth := r.Header.Get("Authorization")
+		if auth != "Bearer "+wantKey {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	}))
+	defer srv.Close()
+
+	client := NewClientWithAPIKey(srv.URL, wantKey)
+	if err := client.Heartbeat(context.Background(), "worker-1"); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestClientRequestJobEmpty(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

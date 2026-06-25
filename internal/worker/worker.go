@@ -22,6 +22,7 @@ type Config struct {
 	GPUAvailable    bool
 	MaxParallelJobs int
 	SchedulerURL    string
+	SchedulerAPIKey string
 	TempDir         string
 	HeartbeatEvery  time.Duration
 	PollInterval    time.Duration
@@ -41,7 +42,7 @@ func New(cfg Config, obj storage.ObjectStorage) *Worker {
 	}
 	return &Worker{
 		cfg:     cfg,
-		client:  NewClient(cfg.SchedulerURL),
+		client:  NewClientWithAPIKey(cfg.SchedulerURL, cfg.SchedulerAPIKey),
 		storage: obj,
 	}
 }

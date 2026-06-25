@@ -62,6 +62,7 @@ func main() {
 		GPUAvailable:    gpuAvailable,
 		MaxParallelJobs: maxParallel,
 		SchedulerURL:    schedulerURL,
+		SchedulerAPIKey: os.Getenv("SCHEDULER_WORKER_API_KEY"),
 		TempDir:         os.Getenv("WORKER_TEMP_DIR"),
 		HeartbeatEvery:  envDuration("WORKER_HEARTBEAT_INTERVAL", 10*time.Second),
 		PollInterval:     envDuration("WORKER_POLL_INTERVAL", 2*time.Second),

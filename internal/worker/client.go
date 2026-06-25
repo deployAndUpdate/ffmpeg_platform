@@ -16,13 +16,20 @@ import (
 // Client talks to the scheduler HTTP API.
 type Client struct {
 	baseURL    string
+	apiKey     string
 	httpClient *http.Client
 }
 
-// NewClient creates a scheduler API client.
+// NewClient creates a scheduler API client without authentication.
 func NewClient(baseURL string) *Client {
+	return NewClientWithAPIKey(baseURL, "")
+}
+
+// NewClientWithAPIKey creates a scheduler API client that sends a worker API key.
+func NewClientWithAPIKey(baseURL, apiKey string) *Client {
 	return &Client{
 		baseURL: strings.TrimRight(baseURL, "/"),
+		apiKey:  apiKey,
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
@@ -72,6 +79,9 @@ func (c *Client) post(ctx context.Context, path string, reqBody, respBody any) e
 		return fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if c.apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {

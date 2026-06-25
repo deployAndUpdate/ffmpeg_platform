@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"go_distributed_system/internal/api"
+	"go_distributed_system/internal/api/auth"
 	"go_distributed_system/internal/reaper"
 	"go_distributed_system/internal/storage"
 	"go_distributed_system/internal/store"
@@ -42,6 +43,14 @@ func main() {
 	r := reaper.New(st, reaper.ConfigFromEnv())
 	go r.Run(ctx)
 
+	authCfg := auth.ConfigFromEnv()
+	if err := authCfg.Validate(); err != nil {
+		log.Fatalf("auth config: %v", err)
+	}
+	if authCfg.Enabled() {
+		log.Printf("API key auth enabled (required=%v)", authCfg.Required)
+	}
+
 	var handler http.Handler
 	if cfg, ok := storage.ConfigFromEnv(); ok {
 		obj, err := storage.NewR2(cfg)
@@ -49,10 +58,10 @@ func main() {
 			log.Fatalf("init R2 storage: %v", err)
 		}
 		log.Printf("R2 storage enabled (bucket=%s)", obj.Bucket())
-		handler = api.NewServerWithStorage(st, obj, cfg)
+		handler = api.NewServerWithStorageAndAuth(st, obj, cfg, authCfg)
 	} else {
 		log.Printf("R2 storage not configured — only local-path JSON jobs are available")
-		handler = api.NewServer(st)
+		handler = api.NewServerWithStorageAndAuth(st, nil, storage.Config{}, authCfg)
 	}
 
 	uploadTimeout := api.UploadTimeoutFromEnv()

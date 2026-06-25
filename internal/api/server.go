@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"go_distributed_system/internal/api/auth"
 	"go_distributed_system/internal/store"
 	"go_distributed_system/internal/storage"
 	"go_distributed_system/internal/types"
@@ -26,6 +27,7 @@ type Server struct {
 	storageConfig   storage.Config
 	maxUploadBytes  int64
 	uploadTimeout   time.Duration
+	auth            auth.Config
 	mux             *http.ServeMux
 }
 
@@ -36,12 +38,18 @@ func NewServer(st JobStore) *Server {
 
 // NewServerWithStorage enables R2 object-storage job flow when storage is non-nil.
 func NewServerWithStorage(st JobStore, obj storage.ObjectStorage, cfg storage.Config) *Server {
+	return NewServerWithStorageAndAuth(st, obj, cfg, auth.Config{})
+}
+
+// NewServerWithStorageAndAuth is like NewServerWithStorage with explicit API key auth config.
+func NewServerWithStorageAndAuth(st JobStore, obj storage.ObjectStorage, cfg storage.Config, authCfg auth.Config) *Server {
 	s := &Server{
 		store:          st,
 		storage:        obj,
 		storageConfig:  cfg,
 		maxUploadBytes: MaxUploadBytesFromEnv(),
 		uploadTimeout:  UploadTimeoutFromEnv(),
+		auth:           authCfg,
 		mux:            http.NewServeMux(),
 	}
 	s.registerRoutes()
@@ -50,7 +58,7 @@ func NewServerWithStorage(st JobStore, obj storage.ObjectStorage, cfg storage.Co
 
 // ServeHTTP allows Server to act as an http.Handler.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	s.mux.ServeHTTP(w, r)
+	auth.NewMiddleware(s.auth, s.mux).ServeHTTP(w, r)
 }
 
 func (s *Server) registerRoutes() {
