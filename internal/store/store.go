@@ -36,6 +36,14 @@ func New(dsn string) (*Store, error) {
 	return &Store{db: db}, nil
 }
 
+// Ping verifies the database connection is alive.
+func (s *Store) Ping(ctx context.Context) error {
+	if s == nil || s.db == nil {
+		return errors.New("store is nil")
+	}
+	return s.db.PingContext(ctx)
+}
+
 // Close closes the underlying DB.
 func (s *Store) Close() error {
 	if s == nil || s.db == nil {

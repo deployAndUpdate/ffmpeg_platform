@@ -10,6 +10,7 @@ import (
 
 // JobStore abstracts persistence for HTTP handlers (enables unit tests without PostgreSQL).
 type JobStore interface {
+	Ping(ctx context.Context) error
 	CreateJob(ctx context.Context, job *types.Job) error
 	QueueJob(ctx context.Context, jobID string) error
 	GetJob(ctx context.Context, id string) (*types.Job, error)

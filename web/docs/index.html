@@ -510,7 +510,7 @@
           <tr><td data-i18n="api.auth.admin">Admin</td><td><code>SCHEDULER_ADMIN_API_KEY</code></td><td data-i18n="api.auth.adminRoutes"><code>/admin/api/*</code> и все защищённые маршруты</td></tr>
         </tbody>
       </table>
-      <p data-i18n="api.auth.public">Без ключа: <code>GET /health</code>, <code>GET /docs/</code>, <code>GET /admin/</code> (UI; API dashboard требует admin-ключ).</p>
+      <p data-i18n="api.auth.public">Без ключа: <code>GET /health</code>, <code>GET /ready</code>, <code>GET /docs/</code>, <code>GET /admin/</code> (UI; API dashboard требует admin-ключ).</p>
       <p data-i18n="api.auth.errors"><code>401</code> — ключ отсутствует или неверный; <code>403</code> — ключ верный, но роль не подходит для маршрута.</p>
       <pre><code>curl -s -X POST http://localhost:8080/jobs \
   -H "Authorization: Bearer $SCHEDULER_CLIENT_API_KEY" \
@@ -542,13 +542,29 @@
       </table>
 
       <h3 data-i18n="api.health">Health</h3>
+      <p data-i18n="api.health.intro">Два probe для orchestrator и load balancer: liveness и readiness.</p>
       <table>
         <tr>
           <td><span class="method method-get">GET</span> <code>/health</code></td>
-          <td data-i18n="api.healthDesc">Проверка доступности scheduler</td>
+          <td data-i18n="api.health.livenessDesc">Liveness — HTTP-процесс жив (без проверки зависимостей)</td>
+        </tr>
+        <tr>
+          <td><span class="method method-get">GET</span> <code>/ready</code></td>
+          <td data-i18n="api.health.readinessDesc">Readiness — ping PostgreSQL; HeadBucket R2, если R2 настроен</td>
         </tr>
       </table>
-      <pre><code>{ "status": "ok" }</code></pre>
+      <p data-i18n="api.health.lbNote">Load balancer и Docker healthcheck используют <code>/ready</code>. В Kubernetes: liveness → <code>/health</code>, readiness → <code>/ready</code>.</p>
+      <pre><code># GET /health — всегда 200, если процесс отвечает
+{ "status": "ok" }
+
+# GET /ready — 200 если все critical checks ok, иначе 503
+{
+  "status": "ok",
+  "checks": {
+    "postgres": { "status": "ok", "latency_ms": 3 },
+    "r2": { "status": "ok", "latency_ms": 42 }
+  }
+}</code></pre>
 
       <h3>Jobs</h3>
       <table>
@@ -795,6 +811,14 @@ curl -s "http://localhost:8080/jobs/$JOB_ID" | jq '.download_url'</code></pre>
 ./scripts/gen-api-keys.sh --format=env
 ./scripts/gen-api-keys.sh --format=export</code></pre>
       <p data-i18n="env.genKeys.note">После смены ключей перезапустите scheduler и worker. Формат <code>--format=env</code> удобен для локального <code>.env</code>; <code>export</code> — для <code>source .env</code>.</p>
+      <h4 data-i18n="env.prodSecrets.title">Production secrets</h4>
+      <p data-i18n="env.prodSecrets.intro">В production не используйте файл <code>.env</code> в образе. Платформа деплоя инжектирует те же переменные окружения из secret store (Kubernetes Secrets, Fly/Railway/ECS env, GitHub Actions secrets и т.п.).</p>
+      <ul>
+        <li data-i18n="env.prodSecrets.required"><code>DB_DSN</code> — managed PostgreSQL с <code>sslmode=require</code></li>
+        <li data-i18n="env.prodSecrets.auth"><code>SCHEDULER_API_KEY_REQUIRED=true</code> + ключи из <code>gen-api-keys.sh</code></li>
+        <li data-i18n="env.prodSecrets.r2"><code>R2_*</code> — scoped API token Cloudflare R2</li>
+        <li data-i18n="env.prodSecrets.rotate">После ротации секретов — rolling restart scheduler и worker</li>
+      </ul>
       <h4 data-i18n="env.submitJobs.title">Массовая отправка jobs</h4>
       <p data-i18n="env.submitJobs.intro">Скрипт <code>scripts/submit-jobs.sh</code> интерактивно запрашивает client API key и число <code>N</code>, затем отправляет <code>N</code> multipart-запросов <code>POST /jobs</code> с файлом <code>testdata/sample.mp4</code> (fallback: <code>testdata/fixtures/sample.mp4</code>). Требует настроенный R2 на scheduler.</p>
       <pre><code>./scripts/submit-jobs.sh
@@ -918,7 +942,7 @@ curl -s -X POST http://localhost:8080/jobs \
         <tbody>
           <tr><td><code>postgres</code></td><td><code>postgres:16-alpine</code></td><td data-i18n="docker.img.postgres">healthcheck, persistent volume</td></tr>
           <tr><td><code>migrate</code></td><td data-i18n="docker.img.migrateBuild">сборка <code>target: migrate</code></td><td data-i18n="docker.img.migrate">one-shot <code>migrate up</code>, embedded SQL, pg_dump для backup</td></tr>
-          <tr><td><code>scheduler</code></td><td data-i18n="docker.img.schedulerBuild">сборка <code>target: scheduler</code></td><td data-i18n="docker.img.scheduler">multi-stage Go, non-root, <code>/health</code></td></tr>
+          <tr><td><code>scheduler</code></td><td data-i18n="docker.img.schedulerBuild">сборка <code>target: scheduler</code></td><td data-i18n="docker.img.scheduler">multi-stage Go, non-root, readiness <code>/ready</code></td></tr>
           <tr><td><code>worker</code></td><td data-i18n="docker.img.workerBuild">сборка <code>target: worker</code></td><td data-i18n="docker.img.worker">ffmpeg, том <code>/data</code>, drop privileges</td></tr>
         </tbody>
       </table>
@@ -1155,10 +1179,13 @@ make ci</code></pre>
         'api.auth.worker': 'Worker',
         'api.auth.admin': 'Admin',
         'api.auth.adminRoutes': '<code>/admin/api/*</code> и все защищённые маршруты',
-        'api.auth.public': 'Без ключа: <code>GET /health</code>, <code>GET /docs/</code>, <code>GET /admin/</code> (UI; API dashboard требует admin-ключ).',
+        'api.auth.public': 'Без ключа: <code>GET /health</code>, <code>GET /ready</code>, <code>GET /docs/</code>, <code>GET /admin/</code> (UI; API dashboard требует admin-ключ).',
         'api.auth.errors': '<code>401</code> — ключ отсутствует или неверный; <code>403</code> — ключ верный, но роль не подходит для маршрута.',
         'api.health': 'Health',
-        'api.healthDesc': 'Проверка доступности scheduler',
+        'api.health.intro': 'Два probe для orchestrator и load balancer: liveness и readiness.',
+        'api.health.livenessDesc': 'Liveness — HTTP-процесс жив (без проверки зависимостей)',
+        'api.health.readinessDesc': 'Readiness — ping PostgreSQL; HeadBucket R2, если R2 настроен',
+        'api.health.lbNote': 'Load balancer и Docker healthcheck используют <code>/ready</code>. В Kubernetes: liveness → <code>/health</code>, readiness → <code>/ready</code>.',
         'api.presets.title': 'Presets',
         'api.presets.intro': 'Именованные профили транскодирования. При создании job укажите <code>preset</code> — scheduler резолвит его в <code>ffmpeg_args</code> и сохраняет snapshot в БД. Поле <code>ffmpeg_args</code> в запросе по-прежнему поддерживается (deprecated): укажите <strong>либо</strong> <code>preset</code>, <strong>либо</strong> <code>ffmpeg_args</code>.',
         'api.presets.list': 'Каталог доступных presets',
@@ -1264,6 +1291,12 @@ make ci</code></pre>
         'env.genKeys.title': 'Генерация API-ключей',
         'env.genKeys.intro': 'Скрипт <code>scripts/gen-api-keys.sh</code> создаёт три случайных ключа через <code>openssl rand</code>. Вывод идёт в stdout — для prod скопируйте значения в secrets manager, не коммитьте их в репозиторий.',
         'env.genKeys.note': 'После смены ключей перезапустите scheduler и worker. Формат <code>--format=env</code> удобен для локального <code>.env</code>; <code>export</code> — для <code>source .env</code>.',
+        'env.prodSecrets.title': 'Production secrets',
+        'env.prodSecrets.intro': 'В production не используйте файл <code>.env</code> в образе. Платформа деплоя инжектирует те же переменные окружения из secret store (Kubernetes Secrets, Fly/Railway/ECS env, GitHub Actions secrets и т.п.).',
+        'env.prodSecrets.required': '<code>DB_DSN</code> — managed PostgreSQL с <code>sslmode=require</code>',
+        'env.prodSecrets.auth': '<code>SCHEDULER_API_KEY_REQUIRED=true</code> + ключи из <code>gen-api-keys.sh</code>',
+        'env.prodSecrets.r2': '<code>R2_*</code> — scoped API token Cloudflare R2',
+        'env.prodSecrets.rotate': 'После ротации секретов — rolling restart scheduler и worker',
         'env.submitJobs.title': 'Массовая отправка jobs',
         'env.submitJobs.intro': 'Скрипт <code>scripts/submit-jobs.sh</code> интерактивно запрашивает client API key и число <code>N</code>, затем отправляет <code>N</code> multipart-запросов <code>POST /jobs</code> с файлом <code>testdata/sample.mp4</code> (fallback: <code>testdata/fixtures/sample.mp4</code>). Требует настроенный R2 на scheduler.',
         'env.r2.worker': 'Те же переменные, что у scheduler',
@@ -1298,7 +1331,7 @@ make ci</code></pre>
         'docker.img.migrateBuild': 'сборка <code>target: migrate</code>',
         'docker.img.migrate': 'one-shot <code>migrate up</code>, embedded SQL, pg_dump для backup',
         'docker.img.schedulerBuild': 'сборка <code>target: scheduler</code>',
-        'docker.img.scheduler': 'multi-stage Go, non-root, <code>/health</code>',
+        'docker.img.scheduler': 'multi-stage Go, non-root, readiness <code>/ready</code>',
         'docker.img.workerBuild': 'сборка <code>target: worker</code>',
         'docker.img.worker': 'ffmpeg, том <code>/data</code>, drop privileges',
         'docker.cleanup': 'Остановка и очистка',
@@ -1422,10 +1455,13 @@ make ci</code></pre>
         'api.auth.worker': 'Worker',
         'api.auth.admin': 'Admin',
         'api.auth.adminRoutes': '<code>/admin/api/*</code> and all protected routes',
-        'api.auth.public': 'No key required: <code>GET /health</code>, <code>GET /docs/</code>, <code>GET /admin/</code> (UI; dashboard API requires admin key).',
+        'api.auth.public': 'No key required: <code>GET /health</code>, <code>GET /ready</code>, <code>GET /docs/</code>, <code>GET /admin/</code> (UI; dashboard API requires admin key).',
         'api.auth.errors': '<code>401</code> — missing or invalid key; <code>403</code> — valid key but wrong role for the route.',
         'api.health': 'Health',
-        'api.healthDesc': 'Scheduler availability check',
+        'api.health.intro': 'Two probes for orchestrator and load balancer: liveness and readiness.',
+        'api.health.livenessDesc': 'Liveness — HTTP process is up (no dependency checks)',
+        'api.health.readinessDesc': 'Readiness — PostgreSQL ping; R2 HeadBucket when R2 is configured',
+        'api.health.lbNote': 'Load balancer and Docker healthcheck use <code>/ready</code>. In Kubernetes: liveness → <code>/health</code>, readiness → <code>/ready</code>.',
         'api.presets.title': 'Presets',
         'api.presets.intro': 'Named transcode profiles. When creating a job, set <code>preset</code> — the scheduler resolves it to <code>ffmpeg_args</code> and stores a snapshot in the DB. Request field <code>ffmpeg_args</code> is still supported (deprecated): specify <strong>either</strong> <code>preset</code> <strong>or</strong> <code>ffmpeg_args</code>.',
         'api.presets.list': 'Catalog of available presets',
@@ -1531,6 +1567,12 @@ make ci</code></pre>
         'env.genKeys.title': 'Generating API keys',
         'env.genKeys.intro': 'Script <code>scripts/gen-api-keys.sh</code> creates three random keys via <code>openssl rand</code>. Output goes to stdout — for production, copy values into a secrets manager; do not commit them.',
         'env.genKeys.note': 'Restart scheduler and worker after changing keys. Use <code>--format=env</code> for a local <code>.env</code> file; <code>export</code> for <code>source .env</code>.',
+        'env.prodSecrets.title': 'Production secrets',
+        'env.prodSecrets.intro': 'In production, do not bake a <code>.env</code> file into the image. The deploy platform injects the same environment variables from a secret store (Kubernetes Secrets, Fly/Railway/ECS env, GitHub Actions secrets, etc.).',
+        'env.prodSecrets.required': '<code>DB_DSN</code> — managed PostgreSQL with <code>sslmode=require</code>',
+        'env.prodSecrets.auth': '<code>SCHEDULER_API_KEY_REQUIRED=true</code> + keys from <code>gen-api-keys.sh</code>',
+        'env.prodSecrets.r2': '<code>R2_*</code> — scoped Cloudflare R2 API token',
+        'env.prodSecrets.rotate': 'After rotating secrets — rolling restart of scheduler and worker',
         'env.submitJobs.title': 'Bulk job submission',
         'env.submitJobs.intro': 'Script <code>scripts/submit-jobs.sh</code> interactively asks for a client API key and count <code>N</code>, then sends <code>N</code> multipart <code>POST /jobs</code> requests with <code>testdata/sample.mp4</code> (fallback: <code>testdata/fixtures/sample.mp4</code>). Requires R2 configured on the scheduler.',
         'env.r2.worker': 'Same variables as scheduler',
@@ -1565,7 +1607,7 @@ make ci</code></pre>
         'docker.img.migrateBuild': 'build <code>target: migrate</code>',
         'docker.img.migrate': 'one-shot <code>migrate up</code>, embedded SQL, pg_dump for backup',
         'docker.img.schedulerBuild': 'build <code>target: scheduler</code>',
-        'docker.img.scheduler': 'multi-stage Go, non-root, <code>/health</code>',
+        'docker.img.scheduler': 'multi-stage Go, non-root, readiness <code>/ready</code>',
         'docker.img.workerBuild': 'build <code>target: worker</code>',
         'docker.img.worker': 'ffmpeg, <code>/data</code> volume, drop privileges',
         'docker.cleanup': 'Stop and cleanup',
@@ -1686,10 +1728,13 @@ make ci</code></pre>
         'api.auth.worker': 'Worker',
         'api.auth.admin': 'Admin',
         'api.auth.adminRoutes': '<code>/admin/api/*</code> та всі захищені маршрути',
-        'api.auth.public': 'Без ключа: <code>GET /health</code>, <code>GET /docs/</code>, <code>GET /admin/</code> (UI; API dashboard потребує admin-ключ).',
+        'api.auth.public': 'Без ключа: <code>GET /health</code>, <code>GET /ready</code>, <code>GET /docs/</code>, <code>GET /admin/</code> (UI; API dashboard потребує admin-ключ).',
         'api.auth.errors': '<code>401</code> — ключ відсутній або невірний; <code>403</code> — ключ вірний, але роль не підходить для маршруту.',
         'api.health': 'Health',
-        'api.healthDesc': 'Перевірка доступності scheduler',
+        'api.health.intro': 'Два probe для orchestrator і load balancer: liveness і readiness.',
+        'api.health.livenessDesc': 'Liveness — HTTP-процес живий (без перевірки залежностей)',
+        'api.health.readinessDesc': 'Readiness — ping PostgreSQL; HeadBucket R2, якщо R2 налаштовано',
+        'api.health.lbNote': 'Load balancer і Docker healthcheck використовують <code>/ready</code>. У Kubernetes: liveness → <code>/health</code>, readiness → <code>/ready</code>.',
         'api.presets.title': 'Presets',
         'api.presets.intro': 'Іменовані профілі транскодування. При створенні job вкажіть <code>preset</code> — scheduler резолвить його в <code>ffmpeg_args</code> і зберігає snapshot у БД. Поле <code>ffmpeg_args</code> у запиті підтримується (deprecated): вкажіть <strong>або</strong> <code>preset</code>, <strong>або</strong> <code>ffmpeg_args</code>.',
         'api.presets.list': 'Каталог доступних presets',
@@ -1788,6 +1833,12 @@ make ci</code></pre>
         'env.genKeys.title': 'Генерація API-ключів',
         'env.genKeys.intro': 'Скрипт <code>scripts/gen-api-keys.sh</code> створює три випадкові ключі через <code>openssl rand</code>. Вивід у stdout — для prod скопіюйте значення в secrets manager, не комітьте їх у репозиторій.',
         'env.genKeys.note': 'Після зміни ключів перезапустіть scheduler і worker. Формат <code>--format=env</code> зручний для локального <code>.env</code>; <code>export</code> — для <code>source .env</code>.',
+        'env.prodSecrets.title': 'Production secrets',
+        'env.prodSecrets.intro': 'У production не використовуйте файл <code>.env</code> в образі. Платформа деплою інжектує ті самі змінні оточення з secret store (Kubernetes Secrets, Fly/Railway/ECS env, GitHub Actions secrets тощо).',
+        'env.prodSecrets.required': '<code>DB_DSN</code> — managed PostgreSQL з <code>sslmode=require</code>',
+        'env.prodSecrets.auth': '<code>SCHEDULER_API_KEY_REQUIRED=true</code> + ключі з <code>gen-api-keys.sh</code>',
+        'env.prodSecrets.r2': '<code>R2_*</code> — scoped API token Cloudflare R2',
+        'env.prodSecrets.rotate': 'Після ротації секретів — rolling restart scheduler і worker',
         'env.submitJobs.title': 'Масова відправка jobs',
         'env.submitJobs.intro': 'Скрипт <code>scripts/submit-jobs.sh</code> інтерактивно запитує client API key і число <code>N</code>, потім надсилає <code>N</code> multipart-запитів <code>POST /jobs</code> з файлом <code>testdata/sample.mp4</code> (fallback: <code>testdata/fixtures/sample.mp4</code>). Потрібен налаштований R2 на scheduler.',
         'env.r2.worker': 'Ті самі змінні, що у scheduler',
@@ -1822,7 +1873,7 @@ make ci</code></pre>
         'docker.img.migrateBuild': 'збірка <code>target: migrate</code>',
         'docker.img.migrate': 'one-shot <code>migrate up</code>, embedded SQL, pg_dump для backup',
         'docker.img.schedulerBuild': 'збірка <code>target: scheduler</code>',
-        'docker.img.scheduler': 'multi-stage Go, non-root, <code>/health</code>',
+        'docker.img.scheduler': 'multi-stage Go, non-root, readiness <code>/ready</code>',
         'docker.img.workerBuild': 'збірка <code>target: worker</code>',
         'docker.img.worker': 'ffmpeg, том <code>/data</code>, drop privileges',
         'docker.cleanup': 'Зупинка та очищення',

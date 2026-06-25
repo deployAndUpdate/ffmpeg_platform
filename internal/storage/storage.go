@@ -13,6 +13,7 @@ type ObjectStat struct {
 }
 
 type ObjectStorage interface {
+	HealthCheck(ctx context.Context) error
 	Bucket() string
 	InputObjectKey(jobID, ext string) string
 	OutputObjectKey(jobID, ext string) string

@@ -132,7 +132,7 @@ func (m *Middleware) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func routeRole(path string) (Role, bool) {
 	switch {
-	case path == "/health", path == "/docs", strings.HasPrefix(path, "/docs/"):
+	case path == "/health", path == "/ready", path == "/docs", strings.HasPrefix(path, "/docs/"):
 		return 0, false
 	case path == "/admin", strings.HasPrefix(path, "/admin/") && !strings.HasPrefix(path, "/admin/api"):
 		return 0, false

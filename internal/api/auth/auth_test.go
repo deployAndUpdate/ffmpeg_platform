@@ -49,7 +49,7 @@ func TestMiddlewarePublicPaths(t *testing.T) {
 		WorkerKey: "worker",
 	}, next)
 
-	for _, path := range []string{"/health", "/docs", "/docs/index.html", "/admin/", "/admin"} {
+	for _, path := range []string{"/health", "/ready", "/docs", "/docs/index.html", "/admin/", "/admin"} {
 		hit = false
 		req := httptest.NewRequest(http.MethodGet, path, nil)
 		rec := httptest.NewRecorder()

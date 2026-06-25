@@ -65,6 +65,17 @@ func (r *R2) Bucket() string {
 	return r.bucket
 }
 
+// HealthCheck verifies R2 bucket access (HeadBucket).
+func (r *R2) HealthCheck(ctx context.Context) error {
+	_, err := r.client.HeadBucket(ctx, &s3.HeadBucketInput{
+		Bucket: aws.String(r.bucket),
+	})
+	if err != nil {
+		return fmt.Errorf("head bucket %q: %w", r.bucket, err)
+	}
+	return nil
+}
+
 func (r *R2) InputObjectKey(jobID, ext string) string {
 	return InputObjectKey(jobID, ext)
 }

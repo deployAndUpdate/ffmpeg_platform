@@ -18,6 +18,7 @@ import (
 )
 
 type mockStore struct {
+	pingFn                 func(ctx context.Context) error
 	createJobFn            func(ctx context.Context, job *types.Job) error
 	queueJobFn             func(ctx context.Context, jobID string) error
 	getJobFn               func(ctx context.Context, id string) (*types.Job, error)
@@ -32,6 +33,13 @@ type mockStore struct {
 	listWorkersFn          func(ctx context.Context) ([]types.WorkerStats, error)
 	getWorkerFn            func(ctx context.Context, id string) (*types.WorkerStats, error)
 	getAdminStatsFn        func(ctx context.Context) (store.AdminStats, error)
+}
+
+func (m *mockStore) Ping(ctx context.Context) error {
+	if m.pingFn != nil {
+		return m.pingFn(ctx)
+	}
+	return nil
 }
 
 func (m *mockStore) CreateJob(ctx context.Context, job *types.Job) error {
@@ -161,6 +169,125 @@ func TestHealth(t *testing.T) {
 
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+
+	var body map[string]string
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if body["status"] != "ok" {
+		t.Fatalf("body = %#v, want status ok", body)
+	}
+}
+
+func TestReadyOK(t *testing.T) {
+	srv := newTestServerWithStorage(&mockStore{}, &mockObjectStorage{bucket: "video-jobs"})
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/ready")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+
+	var body readinessResponse
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Status != "ok" {
+		t.Fatalf("status = %q, want ok", body.Status)
+	}
+	if body.Checks["postgres"].Status != "ok" {
+		t.Fatalf("postgres = %#v, want ok", body.Checks["postgres"])
+	}
+	if body.Checks["r2"].Status != "ok" {
+		t.Fatalf("r2 = %#v, want ok", body.Checks["r2"])
+	}
+}
+
+func TestReadyR2Skipped(t *testing.T) {
+	srv := newTestServer(&mockStore{})
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/ready")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+
+	var body readinessResponse
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Checks["r2"].Status != "skipped" {
+		t.Fatalf("r2 = %#v, want skipped", body.Checks["r2"])
+	}
+}
+
+func TestReadyPostgresFail(t *testing.T) {
+	srv := newTestServer(&mockStore{
+		pingFn: func(context.Context) error {
+			return errors.New("connection refused")
+		},
+	})
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/ready")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", resp.StatusCode)
+	}
+
+	var body readinessResponse
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Status != "degraded" {
+		t.Fatalf("status = %q, want degraded", body.Status)
+	}
+	if body.Checks["postgres"].Status != "fail" {
+		t.Fatalf("postgres = %#v, want fail", body.Checks["postgres"])
+	}
+}
+
+func TestReadyR2Fail(t *testing.T) {
+	obj := &mockObjectStorage{
+		bucket: "video-jobs",
+		healthCheckFn: func(context.Context) error {
+			return errors.New("access denied")
+		},
+	}
+	srv := newTestServerWithStorage(&mockStore{}, obj)
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/ready")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", resp.StatusCode)
+	}
+
+	var body readinessResponse
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Checks["r2"].Status != "fail" {
+		t.Fatalf("r2 = %#v, want fail", body.Checks["r2"])
 	}
 }
 
