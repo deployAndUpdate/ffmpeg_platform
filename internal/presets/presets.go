@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 )
 
 var (
@@ -95,6 +96,25 @@ func ValidateOutputExt(id, ext string) error {
 	}
 	return fmt.Errorf("%w: preset %q does not support %q (allowed: %s)",
 		ErrIncompatibleOutputExt, id, ext, strings.Join(p.OutputExts, ", "))
+}
+
+// MaxDurationSeconds returns a suggested max runtime for a preset, or 0 if unknown.
+func MaxDurationSeconds(id string) int {
+	id = strings.TrimSpace(id)
+	d, ok := maxDurationSeconds[id]
+	if !ok {
+		return 0
+	}
+	return int(d.Seconds())
+}
+
+var maxDurationSeconds = map[string]time.Duration{
+	"h264_crf23": 4 * time.Hour,
+	"h264_crf28": 4 * time.Hour,
+	"copy_video": 30 * time.Minute,
+	"mp3_192k":   1 * time.Hour,
+	"mp3_128k":   1 * time.Hour,
+	"aac_128k":   1 * time.Hour,
 }
 
 func normalizeExt(ext string) string {

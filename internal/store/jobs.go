@@ -10,7 +10,10 @@ import (
 	"go_distributed_system/internal/types"
 )
 
-var ErrJobNotAssigned = errors.New("job is not assigned to this worker or not running")
+var (
+	ErrJobNotAssigned = errors.New("job is not assigned to this worker or not running")
+	ErrLeaseLost      = errors.New("lease lost or generation mismatch")
+)
 
 // AcquireJob atomically claims the next available job for a worker.
 func (s *Store) AcquireJob(ctx context.Context, workerID string, lease time.Duration) (*types.Job, error) {
@@ -28,12 +31,12 @@ SET status = 'RUNNING',
     assigned_worker_id = $1,
     attempt = j.attempt + 1,
     lease_expires_at = NOW() + ($2 * interval '1 second'),
+    lease_generation = j.lease_generation + 1,
     started_at = NOW(),
     updated_at = NOW()
 FROM next_job
 WHERE j.id = next_job.id
-RETURNING j.id, j.input_path, j.output_path, j.preset, j.ffmpeg_args, j.storage, j.status, j.assigned_worker_id,
-          j.attempt, j.max_attempts, j.lease_expires_at, j.created_at, j.started_at, j.finished_at, j.updated_at`
+RETURNING ` + jobReturningColumns
 
 	leaseSeconds := int64(lease.Seconds())
 	if leaseSeconds <= 0 {
@@ -51,8 +54,38 @@ RETURNING j.id, j.input_path, j.output_path, j.preset, j.ffmpeg_args, j.storage,
 	return job, nil
 }
 
+// RenewLease extends lease_expires_at for a running job owned by the worker.
+func (s *Store) RenewLease(ctx context.Context, jobID, workerID string, leaseGeneration int64, lease time.Duration) (*types.Job, error) {
+	leaseSeconds := int64(lease.Seconds())
+	if leaseSeconds <= 0 {
+		leaseSeconds = 1800
+	}
+
+	const q = `
+UPDATE jobs
+SET lease_expires_at = NOW() + ($4 * interval '1 second'),
+    updated_at = NOW()
+WHERE id = $1
+  AND assigned_worker_id = $2
+  AND status = 'RUNNING'
+  AND lease_generation = $3
+RETURNING ` + jobSelectColumns
+
+	row := s.db.QueryRowContext(ctx, q, jobID, workerID, leaseGeneration, leaseSeconds)
+	job, err := scanJob(row)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrLeaseLost
+		}
+		return nil, err
+	}
+	return job, nil
+}
+
 // FinishJob marks a running job as completed or failed/retry and stores logs.
-func (s *Store) FinishJob(ctx context.Context, jobID, workerID string, success bool, logs []types.JobLogEntry) error {
+// leaseGeneration fences stale workers after reaper/re-acquire.
+// On success, a late finish is accepted when the job was moved to RETRY but not yet re-acquired.
+func (s *Store) FinishJob(ctx context.Context, jobID, workerID string, leaseGeneration int64, success bool, logs []types.JobLogEntry) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
@@ -63,17 +96,40 @@ func (s *Store) FinishJob(ctx context.Context, jobID, workerID string, success b
 		}
 	}()
 
+	var status types.JobStatus
 	var attempt, maxAttempts int
+	var gen int64
+	var assigned sql.NullString
+
 	const selectQ = `
-SELECT attempt, max_attempts
+SELECT status, attempt, max_attempts, lease_generation, assigned_worker_id
 FROM jobs
-WHERE id = $1 AND assigned_worker_id = $2 AND status = 'RUNNING'
+WHERE id = $1
 FOR UPDATE`
-	if err = tx.QueryRowContext(ctx, selectQ, jobID, workerID).Scan(&attempt, &maxAttempts); err != nil {
+	if err = tx.QueryRowContext(ctx, selectQ, jobID).Scan(&status, &attempt, &maxAttempts, &gen, &assigned); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrJobNotAssigned
 		}
 		return err
+	}
+
+	if status == types.JobStatusCompleted {
+		if err = insertJobLogsTx(ctx, tx, jobID, logs); err != nil {
+			return err
+		}
+		return tx.Commit()
+	}
+
+	activeFinish := status == types.JobStatusRunning &&
+		assigned.Valid && assigned.String == workerID &&
+		gen == leaseGeneration
+	lateFinish := success &&
+		status == types.JobStatusRetry &&
+		!assigned.Valid &&
+		gen == leaseGeneration
+
+	if !activeFinish && !lateFinish {
+		return ErrJobNotAssigned
 	}
 
 	if success {
@@ -83,8 +139,8 @@ SET status = 'COMPLETED',
     finished_at = NOW(),
     lease_expires_at = NULL,
     updated_at = NOW()
-WHERE id = $1 AND assigned_worker_id = $2 AND status = 'RUNNING'`
-		if _, err = tx.ExecContext(ctx, completeQ, jobID, workerID); err != nil {
+WHERE id = $1`
+		if _, err = tx.ExecContext(ctx, completeQ, jobID); err != nil {
 			return err
 		}
 	} else if attempt >= maxAttempts {
@@ -94,8 +150,8 @@ SET status = 'FAILED',
     finished_at = NOW(),
     lease_expires_at = NULL,
     updated_at = NOW()
-WHERE id = $1 AND assigned_worker_id = $2 AND status = 'RUNNING'`
-		if _, err = tx.ExecContext(ctx, failQ, jobID, workerID); err != nil {
+WHERE id = $1`
+		if _, err = tx.ExecContext(ctx, failQ, jobID); err != nil {
 			return err
 		}
 	} else {
@@ -105,8 +161,8 @@ SET status = 'RETRY',
     assigned_worker_id = NULL,
     lease_expires_at = NULL,
     updated_at = NOW()
-WHERE id = $1 AND assigned_worker_id = $2 AND status = 'RUNNING'`
-		if _, err = tx.ExecContext(ctx, retryQ, jobID, workerID); err != nil {
+WHERE id = $1`
+		if _, err = tx.ExecContext(ctx, retryQ, jobID); err != nil {
 			return err
 		}
 	}
@@ -143,6 +199,16 @@ ORDER BY ts ASC, id ASC`
 	return logs, rows.Err()
 }
 
+// GetJobByIdempotencyKey returns a job created with the given idempotency key.
+func (s *Store) GetJobByIdempotencyKey(ctx context.Context, key string) (*types.Job, error) {
+	const q = `SELECT ` + jobSelectColumns + ` FROM jobs WHERE idempotency_key = $1`
+	job, err := scanJob(s.db.QueryRowContext(ctx, q, key))
+	if err != nil {
+		return nil, err
+	}
+	return job, nil
+}
+
 func insertJobLogsTx(ctx context.Context, tx *sql.Tx, jobID string, logs []types.JobLogEntry) error {
 	if len(logs) == 0 {
 		return nil
@@ -163,6 +229,7 @@ func scanJob(row scanner) (*types.Job, error) {
 	var lease sql.NullTime
 	var started sql.NullTime
 	var finished sql.NullTime
+	var idempotency sql.NullString
 	var storage string
 
 	if err := row.Scan(
@@ -177,6 +244,9 @@ func scanJob(row scanner) (*types.Job, error) {
 		&j.Attempt,
 		&j.MaxAttempts,
 		&lease,
+		&j.LeaseGeneration,
+		&idempotency,
+		&j.MaxDurationSeconds,
 		&j.CreatedAt,
 		&started,
 		&finished,
@@ -199,6 +269,9 @@ func scanJob(row scanner) (*types.Job, error) {
 	}
 	if finished.Valid {
 		j.FinishedAt = &finished.Time
+	}
+	if idempotency.Valid {
+		j.IdempotencyKey = idempotency.String
 	}
 	return &j, nil
 }

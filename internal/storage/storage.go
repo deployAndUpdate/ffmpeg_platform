@@ -7,7 +7,11 @@ import (
 	"time"
 )
 
-// ObjectStorage abstracts R2/S3-compatible object operations.
+// ObjectStat holds object metadata from a HEAD request.
+type ObjectStat struct {
+	Size int64
+}
+
 type ObjectStorage interface {
 	Bucket() string
 	InputObjectKey(jobID, ext string) string
@@ -15,6 +19,7 @@ type ObjectStorage interface {
 	PresignPut(ctx context.Context, key string, expiry time.Duration) (string, error)
 	PresignGet(ctx context.Context, key string, expiry time.Duration) (string, error)
 	Exists(ctx context.Context, key string) (bool, error)
+	StatObject(ctx context.Context, key string) (ObjectStat, error)
 	Download(ctx context.Context, key, localPath string) error
 	Upload(ctx context.Context, localPath, key string) error
 	UploadReader(ctx context.Context, key string, r io.Reader, size int64, contentType string) error

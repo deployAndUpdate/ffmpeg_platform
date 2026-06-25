@@ -383,9 +383,10 @@
              └───────────┘         └───────────┘         └───────────┘</div>
       <h3 data-i18n="architecture.principles">Ключевые принципы</h3>
       <ul>
-        <li data-i18n="architecture.atLeastOnce"><strong>At-least-once</strong> — возможны повторные выполнения при сбоях воркера или истечении lease.</li>
-        <li data-i18n="architecture.lease"><strong>Lease</strong> — при выдаче job воркеру устанавливается <code>lease_expires_at</code> (по умолчанию 30 мин).</li>
-        <li data-i18n="architecture.reaper"><strong>Reaper</strong> — фоновый процесс scheduler помечает воркеров без heartbeat как <code>DEAD</code> и возвращает «осиротевшие» <code>RUNNING</code> job в <code>RETRY</code> или <code>FAILED</code>.</li>
+        <li data-i18n="architecture.atLeastOnce"><strong>Effectively-once</strong> — lease renewal, skip готового output и <code>lease_generation</code> снижают дубли transcode; reaper остаётся safety net.</li>
+        <li data-i18n="architecture.lease"><strong>Lease</strong> — при выдаче job устанавливается <code>lease_expires_at</code> (по умолчанию 30 мин, <code>JOB_LEASE_DURATION</code>). Воркер продлевает lease через <code>POST /workers/renew-lease</code> во время ffmpeg.</li>
+        <li data-i18n="architecture.reaper"><strong>Reaper</strong> — помечает воркеров без heartbeat как <code>DEAD</code> (timeout по умолчанию 50s) и возвращает <code>RUNNING</code> job с истёкшим lease или на <code>DEAD</code> воркере в <code>RETRY</code>/<code>FAILED</code>.</li>
+        <li data-i18n="architecture.idempotency"><strong>Idempotency</strong> — заголовок <code>Idempotency-Key</code> на <code>POST /jobs</code>; воркер пропускает transcode, если output уже валиден.</li>
         <li data-i18n="architecture.skipLocked"><strong>SKIP LOCKED</strong> — несколько воркеров могут безопасно конкурировать за задания без блокировок.</li>
       </ul>
     </section>
@@ -409,13 +410,13 @@
       <p data-i18n="components.reaper">Фоновый цикл в scheduler: помечает воркеров без heartbeat как <code>DEAD</code>, освобождает job с истёкшим lease или назначенные на <code>DEAD</code> воркеров.</p>
 
       <h3><code>internal/worker</code></h3>
-      <p data-i18n="components.workerPkg">Клиент scheduler API и основной цикл воркера: polling, запуск ffmpeg, отправка результата.</p>
+      <p data-i18n="components.workerPkg">Клиент scheduler API и основной цикл воркера: polling, lease renewal, skip готового output, таймаут ffmpeg, запуск transcode, отправка результата с <code>lease_generation</code>.</p>
 
       <h3><code>internal/presets</code></h3>
       <p data-i18n="components.presets">Реестр именованных профилей транскодирования: резолв preset → ffmpeg_args, валидация output_ext.</p>
 
       <h3><code>internal/ffmpeg</code></h3>
-      <p data-i18n="components.ffmpeg">Обёртка над <code>exec ffmpeg</code>: сбор stdout/stderr построчно, проверка входного файла, создание директории для выхода.</p>
+      <p data-i18n="components.ffmpeg">Обёртка над <code>exec ffmpeg</code>: сбор stdout/stderr, проверка входа/выхода, <code>ffprobe</code> для валидации готового output.</p>
 
       <h3><code>internal/storage</code></h3>
       <p data-i18n="components.storage">Cloudflare R2 (S3-compatible): presigned upload/download, download/upload объектов для воркера.</p>
@@ -452,7 +453,7 @@
 
     <section id="database">
       <h2 data-i18n="database.title">База данных</h2>
-      <p data-i18n="database.migration">Версионированные SQL-миграции в <code>db/migrations/</code> (<code>000001_init</code>, <code>000002_storage</code>, <code>000003_preset</code>). Применение: <code>make migrate-up</code> или сервис <code>migrate</code> в Docker Compose.</p>
+      <p data-i18n="database.migration">Версионированные SQL-миграции в <code>db/migrations/</code> (<code>000001_init</code> … <code>000004_job_exec_safety</code>). Применение: <code>make migrate-up</code> или сервис <code>migrate</code> в Docker Compose.</p>
       <p data-i18n="database.migrator">CLI <code>cmd/migrate</code>: <code>up</code>, <code>down [N]</code>, <code>status</code>, <code>backup</code>. Версии хранятся в таблице <code>schema_migrations</code> (golang-migrate).</p>
 
       <h3 data-i18n="database.workersTable">Таблица <code>workers</code></h3>
@@ -484,6 +485,9 @@
           <tr><td><code>attempt</code></td><td>INTEGER</td><td data-i18n="database.jobs.attempt">Номер попытки</td></tr>
           <tr><td><code>max_attempts</code></td><td>INTEGER</td><td data-i18n="database.jobs.maxAttempts">Максимум попыток (по умолчанию 3)</td></tr>
           <tr><td><code>lease_expires_at</code></td><td>TIMESTAMPTZ</td><td data-i18n="database.jobs.lease">Срок lease при RUNNING</td></tr>
+          <tr><td><code>lease_generation</code></td><td>BIGINT</td><td data-i18n="database.jobs.leaseGen">Fencing: +1 при каждом acquire, проверка в renew/finish</td></tr>
+          <tr><td><code>idempotency_key</code></td><td>TEXT</td><td data-i18n="database.jobs.idempotency">Уникальный ключ создания (nullable)</td></tr>
+          <tr><td><code>max_duration_seconds</code></td><td>INTEGER</td><td data-i18n="database.jobs.maxDuration">Лимит runtime ffmpeg (0 = default по preset/env)</td></tr>
         </tbody>
       </table>
 
@@ -651,6 +655,10 @@ curl -s "http://localhost:8080/jobs/$JOB_ID" | jq '.download_url'</code></pre>
           <td data-i18n="api.workers.request">Запрос следующего job (SKIP LOCKED + lease)</td>
         </tr>
         <tr>
+          <td><span class="method method-post">POST</span> <code>/workers/renew-lease</code></td>
+          <td data-i18n="api.workers.renew">Продление lease во время RUNNING</td>
+        </tr>
+        <tr>
           <td><span class="method method-post">POST</span> <code>/workers/job-result</code></td>
           <td data-i18n="api.workers.result">Финализация job и запись логов</td>
         </tr>
@@ -662,10 +670,18 @@ curl -s "http://localhost:8080/jobs/$JOB_ID" | jq '.download_url'</code></pre>
 // Ответ — job или null, если очередь пуста:
 { "job": { ... } }</code></pre>
 
+      <p data-i18n="api.workers.renewBody"><strong>POST /workers/renew-lease</strong>:</p>
+      <pre><code>{
+  "worker_id": "uuid",
+  "job_id": "uuid",
+  "lease_generation": 1
+}</code></pre>
+
       <p data-i18n="api.workers.resultBody"><strong>POST /workers/job-result</strong>:</p>
       <pre><code>{
   "worker_id": "uuid",
   "job_id": "uuid",
+  "lease_generation": 1,
   "success": true,
   "logs": [
     { "stream": "stdout", "line": "..." },
@@ -707,8 +723,10 @@ curl -s "http://localhost:8080/jobs/$JOB_ID" | jq '.download_url'</code></pre>
           <tr><td><code>SCHEDULER_ADMIN_API_KEY</code></td><td data-i18n="env.no">нет</td><td>—</td><td data-i18n="env.scheduler.adminKey">Опциональный admin-ключ (все защищённые маршруты)</td></tr>
           <tr><td><code>MAX_UPLOAD_BYTES</code></td><td data-i18n="env.no">нет</td><td><code>536870912</code></td><td data-i18n="env.scheduler.maxUpload">Макс. размер multipart upload (байты)</td></tr>
           <tr><td><code>SCHEDULER_UPLOAD_TIMEOUT</code></td><td data-i18n="env.no">нет</td><td><code>30m</code></td><td data-i18n="env.scheduler.uploadTimeout">Таймаут приёма файла через API</td></tr>
+          <tr><td><code>JOB_LEASE_DURATION</code></td><td data-i18n="env.no">нет</td><td><code>30m</code></td><td data-i18n="env.job.lease">Длительность lease при acquire/renew</td></tr>
+          <tr><td><code>JOB_DEFAULT_MAX_DURATION</code></td><td data-i18n="env.no">нет</td><td><code>2h</code></td><td data-i18n="env.job.maxDuration">Default max runtime job (если не задан в job/preset)</td></tr>
           <tr><td><code>REAPER_INTERVAL</code></td><td data-i18n="env.no">нет</td><td><code>30s</code></td><td data-i18n="env.reaper.interval">Интервал фонового reaper</td></tr>
-          <tr><td><code>REAPER_WORKER_TIMEOUT</code></td><td data-i18n="env.no">нет</td><td><code>45s</code></td><td data-i18n="env.reaper.workerTimeout">Без heartbeat дольше этого — воркер <code>DEAD</code></td></tr>
+          <tr><td><code>REAPER_WORKER_TIMEOUT</code></td><td data-i18n="env.no">нет</td><td><code>50s</code></td><td data-i18n="env.reaper.workerTimeout">Без heartbeat дольше этого — воркер <code>DEAD</code> (рекомендуется ≥3× heartbeat)</td></tr>
           <tr><td><code>REAPER_ENABLED</code></td><td data-i18n="env.no">нет</td><td><code>true</code></td><td data-i18n="env.reaper.enabled"><code>false</code> или <code>0</code> — отключить reaper</td></tr>
           <tr><td><code>R2_ACCESS_KEY_ID</code></td><td data-i18n="env.no">нет*</td><td>—</td><td data-i18n="env.r2.key">R2 API token access key</td></tr>
           <tr><td><code>R2_SECRET_ACCESS_KEY</code></td><td data-i18n="env.no">нет*</td><td>—</td><td data-i18n="env.r2.secret">R2 API token secret</td></tr>
@@ -740,6 +758,9 @@ curl -s "http://localhost:8080/jobs/$JOB_ID" | jq '.download_url'</code></pre>
           <tr><td><code>WORKER_GPU_AVAILABLE</code></td><td data-i18n="env.no">нет</td><td><code>false</code></td><td data-i18n="env.worker.gpu"><code>true</code> или <code>1</code> для GPU</td></tr>
           <tr><td><code>WORKER_HEARTBEAT_INTERVAL</code></td><td data-i18n="env.no">нет</td><td><code>10s</code></td><td data-i18n="env.worker.heartbeat">Интервал heartbeat</td></tr>
           <tr><td><code>WORKER_POLL_INTERVAL</code></td><td data-i18n="env.no">нет</td><td><code>2s</code></td><td data-i18n="env.worker.poll">Пауза при пустой очереди</td></tr>
+          <tr><td><code>WORKER_LEASE_RENEW_INTERVAL</code></td><td data-i18n="env.no">нет</td><td><code>lease/3</code> (min 30s)</td><td data-i18n="env.worker.leaseRenew">Интервал renew lease во время job</td></tr>
+          <tr><td><code>WORKER_JOB_LEASE_DURATION</code></td><td data-i18n="env.no">нет</td><td><code>JOB_LEASE_DURATION</code> / <code>30m</code></td><td data-i18n="env.worker.jobLease">Lease TTL для renew (должен совпадать с scheduler)</td></tr>
+          <tr><td><code>WORKER_DEFAULT_MAX_DURATION</code></td><td data-i18n="env.no">нет</td><td><code>JOB_DEFAULT_MAX_DURATION</code> / <code>2h</code></td><td data-i18n="env.worker.maxDuration">Fallback таймаут ffmpeg</td></tr>
           <tr><td><code>WORKER_TEMP_DIR</code></td><td data-i18n="env.no">нет</td><td><code>/tmp/jobs</code></td><td data-i18n="env.worker.temp">Временные файлы при R2 job</td></tr>
           <tr><td><code>R2_*</code></td><td data-i18n="env.no">нет*</td><td>—</td><td data-i18n="env.r2.worker">Те же переменные, что у scheduler</td></tr>
         </tbody>
@@ -1008,9 +1029,10 @@ make ci</code></pre>
         'overview.card.postgres': 'Единственный источник истины: jobs, workers, job_logs, lease TTL.',
         'architecture.title': 'Архитектура',
         'architecture.principles': 'Ключевые принципы',
-        'architecture.atLeastOnce': '<strong>At-least-once</strong> — возможны повторные выполнения при сбоях воркера или истечении lease.',
-        'architecture.lease': '<strong>Lease</strong> — при выдаче job воркеру устанавливается <code>lease_expires_at</code> (по умолчанию 30 мин).',
-        'architecture.reaper': '<strong>Reaper</strong> — фоновый процесс scheduler помечает воркеров без heartbeat как <code>DEAD</code> и возвращает «осиротевшие» <code>RUNNING</code> job в <code>RETRY</code> или <code>FAILED</code>.',
+        'architecture.atLeastOnce': '<strong>Effectively-once</strong> — lease renewal, skip готового output и <code>lease_generation</code> снижают дубли transcode; reaper остаётся safety net.',
+        'architecture.lease': '<strong>Lease</strong> — при выдаче job устанавливается <code>lease_expires_at</code> (по умолчанию 30 мин, <code>JOB_LEASE_DURATION</code>). Воркер продлевает lease через <code>POST /workers/renew-lease</code> во время ffmpeg.',
+        'architecture.reaper': '<strong>Reaper</strong> — помечает воркеров без heartbeat как <code>DEAD</code> (timeout по умолчанию 50s) и возвращает <code>RUNNING</code> job с истёкшим lease или на <code>DEAD</code> воркере в <code>RETRY</code>/<code>FAILED</code>.',
+        'architecture.idempotency': '<strong>Idempotency</strong> — заголовок <code>Idempotency-Key</code> на <code>POST /jobs</code>; воркер пропускает transcode, если output уже валиден.',
         'architecture.skipLocked': '<strong>SKIP LOCKED</strong> — несколько воркеров могут безопасно конкурировать за задания без блокировок.',
         'components.title': 'Компоненты',
         'components.scheduler': 'Точка входа HTTP-сервера. Подключается к PostgreSQL через <code>DB_DSN</code>, слушает <code>SCHEDULER_ADDR</code> (по умолчанию <code>:8080</code>), запускает фоновый reaper.',
@@ -1018,9 +1040,9 @@ make ci</code></pre>
         'components.api': 'HTTP-хендлеры: создание и получение job, регистрация воркеров, heartbeat, выдача job (<code>AcquireJob</code>), финализация (<code>FinishJob</code>).',
         'components.store': 'Слой доступа к PostgreSQL: CRUD для jobs и workers, атомарная выдача заданий, запись логов в транзакции, reaper (<code>MarkStaleWorkersDead</code>, <code>ReapOrphanJobs</code>).',
         'components.reaper': 'Фоновый цикл в scheduler: помечает воркеров без heartbeat как <code>DEAD</code>, освобождает job с истёкшим lease или назначенные на <code>DEAD</code> воркеров.',
-        'components.workerPkg': 'Клиент scheduler API и основной цикл воркера: polling, запуск ffmpeg, отправка результата.',
+        'components.workerPkg': 'Клиент scheduler API и основной цикл воркера: polling, lease renewal, skip готового output, таймаут ffmpeg, запуск transcode, отправка результата с lease_generation.',
         'components.presets': 'Реестр именованных профилей транскодирования: резолв preset → ffmpeg_args, валидация output_ext.',
-        'components.ffmpeg': 'Обёртка над <code>exec ffmpeg</code>: сбор stdout/stderr построчно, проверка входного файла, создание директории для выхода.',
+        'components.ffmpeg': 'Обёртка над exec ffmpeg: сбор stdout/stderr, проверка входа/выхода, ffprobe для валидации готового output.',
         'components.storage': 'Cloudflare R2 (S3-compatible): presigned upload/download, download/upload объектов для воркера.',
         'jobLifecycle.title': 'Жизненный цикл Job',
         'jobLifecycle.new': 'R2 job создан, ожидает загрузки входного файла',
@@ -1033,7 +1055,7 @@ make ci</code></pre>
         'jobLifecycle.retry': 'Ошибка выполнения, будет повторно поставлено в очередь',
         'jobLifecycle.note': 'Локальный job через <code>POST /jobs</code> сразу получает статус <code>QUEUED</code>. R2 job через <code>POST /jobs/init</code> начинается со статуса <code>NEW</code> и переходит в <code>QUEUED</code> после <code>POST /jobs/{id}/submit</code>. При выдаче воркеру <code>attempt</code> увеличивается на 1. Reaper переводит <code>RUNNING</code> в <code>RETRY</code> или <code>FAILED</code> при истечении lease или падении воркера (без увеличения <code>attempt</code>).',
         'database.title': 'База данных',
-        'database.migration': 'Версионированные SQL-миграции в <code>db/migrations/</code> (<code>000001_init</code>, <code>000002_storage</code>, <code>000003_preset</code>). Применение: <code>make migrate-up</code> или сервис <code>migrate</code> в Docker Compose.',
+        'database.migration': 'Версионированные SQL-миграции в <code>db/migrations/</code> (<code>000001_init</code> … <code>000004_job_exec_safety</code>). Применение: <code>make migrate-up</code> или сервис <code>migrate</code> в Docker Compose.',
         'database.migrator': 'CLI <code>cmd/migrate</code>: <code>up</code>, <code>down [N]</code>, <code>status</code>, <code>backup</code>. Версии хранятся в таблице <code>schema_migrations</code> (golang-migrate).',
         'database.workersTable': 'Таблица <code>workers</code>',
         'database.jobsTable': 'Таблица <code>jobs</code>',
@@ -1059,6 +1081,9 @@ make ci</code></pre>
         'database.jobs.attempt': 'Номер попытки',
         'database.jobs.maxAttempts': 'Максимум попыток (по умолчанию 3)',
         'database.jobs.lease': 'Срок lease при RUNNING',
+        'database.jobs.leaseGen': 'Fencing: +1 при каждом acquire, проверка в renew/finish',
+        'database.jobs.idempotency': 'Уникальный ключ создания (nullable)',
+        'database.jobs.maxDuration': 'Лимит runtime ffmpeg (0 = default по preset/env)',
         'database.logsDesc': 'Строки stdout/stderr с таймштампом. Записываются при финализации job в транзакции с обновлением статуса.',
         'api.title': 'HTTP API',
         'api.intro': 'Базовый URL: <code>http://&lt;scheduler-host&gt;:8080</code>. JSON для локальных job; <code>multipart/form-data</code> для upload в R2 через <code>POST /jobs</code>.',
@@ -1107,8 +1132,10 @@ make ci</code></pre>
         'api.workers.register': 'Регистрация или обновление воркера',
         'api.workers.heartbeat': 'Heartbeat воркера',
         'api.workers.request': 'Запрос следующего job (SKIP LOCKED + lease)',
+        'api.workers.renew': 'Продление lease во время RUNNING',
         'api.workers.result': 'Финализация job и запись логов',
         'api.workers.requestBody': '<strong>POST /workers/request-job</strong>:',
+        'api.workers.renewBody': '<strong>POST /workers/renew-lease</strong>:',
         'api.workers.resultBody': '<strong>POST /workers/job-result</strong>:',
         'api.docs': 'Документация',
         'api.docsDesc': 'Эта страница документации',
@@ -1134,7 +1161,12 @@ make ci</code></pre>
         'env.scheduler.maxUpload': 'Макс. размер multipart upload (байты)',
         'env.scheduler.uploadTimeout': 'Таймаут приёма файла через API',
         'env.reaper.interval': 'Интервал фонового reaper',
-        'env.reaper.workerTimeout': 'Без heartbeat дольше этого — воркер <code>DEAD</code>',
+        'env.reaper.workerTimeout': 'Без heartbeat дольше этого — воркер <code>DEAD</code> (рекомендуется ≥3× heartbeat)',
+        'env.job.lease': 'Длительность lease при acquire/renew',
+        'env.job.maxDuration': 'Default max runtime job (если не задан в job/preset)',
+        'env.worker.leaseRenew': 'Интервал renew lease во время job',
+        'env.worker.jobLease': 'Lease TTL для renew (должен совпадать с scheduler)',
+        'env.worker.maxDuration': 'Fallback таймаут ffmpeg',
         'env.reaper.enabled': '<code>false</code> или <code>0</code> — отключить reaper',
         'env.worker.url': 'URL scheduler, напр. <code>http://localhost:8080</code>',
         'env.worker.apiKey': 'Worker API-ключ (если auth включена на scheduler)',
@@ -1245,9 +1277,10 @@ make ci</code></pre>
         'overview.card.postgres': 'Single source of truth: jobs, workers, job_logs, lease TTL.',
         'architecture.title': 'Architecture',
         'architecture.principles': 'Key principles',
-        'architecture.atLeastOnce': '<strong>At-least-once</strong> — duplicate runs are possible on worker failure or lease expiry.',
-        'architecture.lease': '<strong>Lease</strong> — when a job is assigned, <code>lease_expires_at</code> is set (default 30 min).',
-        'architecture.reaper': '<strong>Reaper</strong> — scheduler background process marks workers without heartbeat as <code>DEAD</code> and moves orphaned <code>RUNNING</code> jobs to <code>RETRY</code> or <code>FAILED</code>.',
+        'architecture.atLeastOnce': '<strong>Effectively-once</strong> — lease renewal, skipping valid output, and <code>lease_generation</code> reduce duplicate transcodes; reaper remains a safety net.',
+        'architecture.lease': '<strong>Lease</strong> — <code>lease_expires_at</code> is set on dispatch (default 30 min, <code>JOB_LEASE_DURATION</code>). Worker renews via <code>POST /workers/renew-lease</code> while ffmpeg runs.',
+        'architecture.reaper': '<strong>Reaper</strong> — marks workers without heartbeat as <code>DEAD</code> (default timeout 50s) and moves <code>RUNNING</code> jobs with expired lease or on <code>DEAD</code> workers to <code>RETRY</code>/<code>FAILED</code>.',
+        'architecture.idempotency': '<strong>Idempotency</strong> — <code>Idempotency-Key</code> header on <code>POST /jobs</code>; worker skips transcode when output is already valid.',
         'architecture.skipLocked': '<strong>SKIP LOCKED</strong> — multiple workers can safely compete for jobs without blocking.',
         'components.title': 'Components',
         'components.scheduler': 'HTTP server entry point. Connects to PostgreSQL via <code>DB_DSN</code>, listens on <code>SCHEDULER_ADDR</code> (default <code>:8080</code>), runs background reaper.',
@@ -1255,9 +1288,9 @@ make ci</code></pre>
         'components.api': 'HTTP handlers: create/get jobs, worker registration, heartbeat, job dispatch (<code>AcquireJob</code>), finalization (<code>FinishJob</code>).',
         'components.store': 'PostgreSQL access layer: CRUD for jobs and workers, atomic dispatch, transactional log writes, reaper (<code>MarkStaleWorkersDead</code>, <code>ReapOrphanJobs</code>).',
         'components.reaper': 'Background loop in scheduler: marks workers without heartbeat as <code>DEAD</code>, releases jobs with expired lease or assigned to <code>DEAD</code> workers.',
-        'components.workerPkg': 'Scheduler API client and worker loop: polling, ffmpeg execution, result upload.',
+        'components.workerPkg': 'Scheduler API client and worker loop: polling, lease renewal, skip valid output, ffmpeg timeout, transcode, result submit with lease_generation.',
         'components.presets': 'Named transcode preset registry: resolve preset → ffmpeg_args, validate output_ext.',
-        'components.ffmpeg': 'Wrapper around <code>exec ffmpeg</code>: line-by-line stdout/stderr capture, input validation, output directory creation.',
+        'components.ffmpeg': 'Wrapper around exec ffmpeg: stdout/stderr capture, input/output checks, ffprobe for valid output.',
         'components.storage': 'Cloudflare R2 (S3-compatible): presigned upload/download, object download/upload for workers.',
         'jobLifecycle.title': 'Job lifecycle',
         'jobLifecycle.col.status': 'Status',
@@ -1270,7 +1303,7 @@ make ci</code></pre>
         'jobLifecycle.retry': 'Execution error, will be re-queued',
         'jobLifecycle.note': 'Local jobs via <code>POST /jobs</code> start as <code>QUEUED</code>. R2 jobs via <code>POST /jobs/init</code> start as <code>NEW</code> and move to <code>QUEUED</code> after <code>POST /jobs/{id}/submit</code>. On dispatch, <code>attempt</code> increments by 1. Reaper moves <code>RUNNING</code> to <code>RETRY</code> or <code>FAILED</code> on lease expiry or worker failure (without incrementing <code>attempt</code>).',
         'database.title': 'Database',
-        'database.migration': 'Versioned SQL migrations in <code>db/migrations/</code> (<code>000001_init</code>, <code>000002_storage</code>, <code>000003_preset</code>). Apply with <code>make migrate-up</code> or the Docker Compose <code>migrate</code> service.',
+        'database.migration': 'Versioned SQL migrations in <code>db/migrations/</code> (<code>000001_init</code> … <code>000004_job_exec_safety</code>). Apply with <code>make migrate-up</code> or the Docker Compose <code>migrate</code> service.',
         'database.migrator': 'CLI <code>cmd/migrate</code>: <code>up</code>, <code>down [N]</code>, <code>status</code>, <code>backup</code>. Versions are tracked in <code>schema_migrations</code> (golang-migrate).',
         'database.workersTable': 'Table <code>workers</code>',
         'database.jobsTable': 'Table <code>jobs</code>',
@@ -1296,6 +1329,9 @@ make ci</code></pre>
         'database.jobs.attempt': 'Attempt number',
         'database.jobs.maxAttempts': 'Max attempts (default 3)',
         'database.jobs.lease': 'Lease expiry when RUNNING',
+        'database.jobs.leaseGen': 'Fencing: +1 on each acquire, checked on renew/finish',
+        'database.jobs.idempotency': 'Unique create key (nullable)',
+        'database.jobs.maxDuration': 'ffmpeg runtime limit (0 = preset/env default)',
         'database.logsDesc': 'stdout/stderr lines with timestamps. Written on job finalization in a transaction with status update.',
         'api.title': 'HTTP API',
         'api.intro': 'Base URL: <code>http://&lt;scheduler-host&gt;:8080</code>. JSON for local jobs; <code>multipart/form-data</code> for R2 upload via <code>POST /jobs</code>.',
@@ -1344,8 +1380,10 @@ make ci</code></pre>
         'api.workers.register': 'Register or update worker',
         'api.workers.heartbeat': 'Worker heartbeat',
         'api.workers.request': 'Request next job (SKIP LOCKED + lease)',
+        'api.workers.renew': 'Extend lease while RUNNING',
         'api.workers.result': 'Finalize job and store logs',
         'api.workers.requestBody': '<strong>POST /workers/request-job</strong>:',
+        'api.workers.renewBody': '<strong>POST /workers/renew-lease</strong>:',
         'api.workers.resultBody': '<strong>POST /workers/job-result</strong>:',
         'api.docs': 'Documentation',
         'api.docsDesc': 'This documentation page',
@@ -1371,7 +1409,12 @@ make ci</code></pre>
         'env.scheduler.maxUpload': 'Max multipart upload size (bytes)',
         'env.scheduler.uploadTimeout': 'API file upload timeout',
         'env.reaper.interval': 'Background reaper interval',
-        'env.reaper.workerTimeout': 'No heartbeat for longer than this marks worker <code>DEAD</code>',
+        'env.reaper.workerTimeout': 'No heartbeat for longer than this marks worker <code>DEAD</code> (recommend ≥3× heartbeat)',
+        'env.job.lease': 'Lease duration on acquire/renew',
+        'env.job.maxDuration': 'Default max job runtime (when not set on job/preset)',
+        'env.worker.leaseRenew': 'Lease renew interval during job',
+        'env.worker.jobLease': 'Lease TTL for renew (should match scheduler)',
+        'env.worker.maxDuration': 'Fallback ffmpeg timeout',
         'env.reaper.enabled': '<code>false</code> or <code>0</code> disables reaper',
         'env.worker.url': 'Scheduler URL, e.g. <code>http://localhost:8080</code>',
         'env.worker.apiKey': 'Worker API key (when auth is enabled on scheduler)',
@@ -1482,9 +1525,10 @@ make ci</code></pre>
         'overview.card.postgres': 'Єдине джерело істини: jobs, workers, job_logs, lease TTL.',
         'architecture.title': 'Архітектура',
         'architecture.principles': 'Ключові принципи',
-        'architecture.atLeastOnce': '<strong>At-least-once</strong> — можливі повторні виконання при збоях воркера або закінченні lease.',
-        'architecture.lease': '<strong>Lease</strong> — при видачі job воркеру встановлюється <code>lease_expires_at</code> (за замовчуванням 30 хв).',
-        'architecture.reaper': '<strong>Reaper</strong> — фоновий процес scheduler позначає воркерів без heartbeat як <code>DEAD</code> і повертає «осиротілі» <code>RUNNING</code> job у <code>RETRY</code> або <code>FAILED</code>.',
+        'architecture.atLeastOnce': '<strong>Effectively-once</strong> — lease renewal, skip готового output і lease_generation знижують дублі transcode; reaper залишається safety net.',
+        'architecture.lease': '<strong>Lease</strong> — при видачі job встановлюється lease_expires_at (за замовчуванням 30 хв, JOB_LEASE_DURATION). Воркер продовжує lease через POST /workers/renew-lease під час ffmpeg.',
+        'architecture.reaper': '<strong>Reaper</strong> — позначає воркерів без heartbeat як DEAD (timeout за замовчуванням 50s) і повертає RUNNING job з простроченим lease або на DEAD воркері в RETRY/FAILED.',
+        'architecture.idempotency': '<strong>Idempotency</strong> — заголовок Idempotency-Key на POST /jobs; воркер пропускає transcode, якщо output уже валідний.',
         'architecture.skipLocked': '<strong>SKIP LOCKED</strong> — кілька воркерів можуть безпечно конкурувати за завдання без блокувань.',
         'components.title': 'Компоненти',
         'components.scheduler': 'Точка входу HTTP-сервера. Підключається до PostgreSQL через <code>DB_DSN</code>, слухає <code>SCHEDULER_ADDR</code> (за замовчуванням <code>:8080</code>), запускає фоновий reaper.',
@@ -1492,9 +1536,9 @@ make ci</code></pre>
         'components.api': 'HTTP-обробники: створення та отримання job, реєстрація воркерів, heartbeat, видача job (<code>AcquireJob</code>), фіналізація (<code>FinishJob</code>).',
         'components.store': 'Шар доступу до PostgreSQL: CRUD для jobs і workers, атомарна видача завдань, запис логів у транзакції, reaper (<code>MarkStaleWorkersDead</code>, <code>ReapOrphanJobs</code>).',
         'components.reaper': 'Фоновий цикл у scheduler: позначає воркерів без heartbeat як <code>DEAD</code>, звільняє job з простроченим lease або призначені на <code>DEAD</code> воркерів.',
-        'components.workerPkg': 'Клієнт scheduler API та основний цикл воркера: polling, запуск ffmpeg, надсилання результату.',
+        'components.workerPkg': 'Клієнт scheduler API та основний цикл воркера: polling, lease renewal, skip готового output, таймаут ffmpeg, transcode, результат з lease_generation.',
         'components.presets': 'Реєстр іменованих профілів транскодування: резолв preset → ffmpeg_args, валідація output_ext.',
-        'components.ffmpeg': 'Обгортка над <code>exec ffmpeg</code>: збір stdout/stderr по рядках, перевірка вхідного файлу, створення директорії для виходу.',
+        'components.ffmpeg': 'Обгортка над exec ffmpeg: збір stdout/stderr, перевірка входу/виходу, ffprobe для валідації output.',
         'components.storage': 'Cloudflare R2 (S3-compatible): presigned upload/download, download/upload об\'єктів для воркера.',
         'jobLifecycle.title': 'Життєвий цикл Job',
         'jobLifecycle.col.status': 'Статус',
@@ -1507,7 +1551,7 @@ make ci</code></pre>
         'jobLifecycle.retry': 'Помилка виконання, буде повторно поставлено в чергу',
         'jobLifecycle.note': 'Локальний job через <code>POST /jobs</code> одразу отримує статус <code>QUEUED</code>. R2 job через <code>POST /jobs/init</code> починається зі статусу <code>NEW</code> і переходить у <code>QUEUED</code> після <code>POST /jobs/{id}/submit</code>. При видачі воркеру <code>attempt</code> збільшується на 1. Reaper переводить <code>RUNNING</code> у <code>RETRY</code> або <code>FAILED</code> при закінченні lease або падінні воркера (без збільшення <code>attempt</code>).',
         'database.title': 'База даних',
-        'database.migration': 'Версіоновані SQL-міграції в <code>db/migrations/</code> (<code>000001_init</code>, <code>000002_storage</code>, <code>000003_preset</code>). Застосування: <code>make migrate-up</code> або сервіс <code>migrate</code> у Docker Compose.',
+        'database.migration': 'Версіоновані SQL-міграції в db/migrations/ (000001_init … 000004_job_exec_safety). Застосування: make migrate-up або сервіс migrate у Docker Compose.',
         'database.migrator': 'CLI <code>cmd/migrate</code>: <code>up</code>, <code>down [N]</code>, <code>status</code>, <code>backup</code>. Версії зберігаються в таблиці <code>schema_migrations</code> (golang-migrate).',
         'database.workersTable': 'Таблиця <code>workers</code>',
         'database.jobsTable': 'Таблиця <code>jobs</code>',

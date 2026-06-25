@@ -73,7 +73,9 @@ jobs:
         with:
           go-version: "1.22.x"
           cache: true
+      - name: install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
       - name: apply migrations
         run: DB_DSN=$TEST_DB_DSN go run ./cmd/migrate up
       - name: integration tests
-        run: go test -race -count=1 -p 1 -tags=integration ./internal/migrate/... ./internal/store/... ./internal/api/...
+        run: go test -race -count=1 -p 1 -tags=integration ./internal/migrate/... ./internal/store/... ./internal/api/... ./internal/worker/...

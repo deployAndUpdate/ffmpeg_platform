@@ -56,16 +56,19 @@ func main() {
 	gpuAvailable := os.Getenv("WORKER_GPU_AVAILABLE") == "true" || os.Getenv("WORKER_GPU_AVAILABLE") == "1"
 
 	cfg := worker.Config{
-		ID:              workerID,
-		Hostname:        hostname,
-		CPUCores:        cpuCores,
-		GPUAvailable:    gpuAvailable,
-		MaxParallelJobs: maxParallel,
-		SchedulerURL:    schedulerURL,
-		SchedulerAPIKey: os.Getenv("SCHEDULER_WORKER_API_KEY"),
-		TempDir:         os.Getenv("WORKER_TEMP_DIR"),
-		HeartbeatEvery:  envDuration("WORKER_HEARTBEAT_INTERVAL", 10*time.Second),
-		PollInterval:     envDuration("WORKER_POLL_INTERVAL", 2*time.Second),
+		ID:                    workerID,
+		Hostname:              hostname,
+		CPUCores:              cpuCores,
+		GPUAvailable:          gpuAvailable,
+		MaxParallelJobs:       maxParallel,
+		SchedulerURL:          schedulerURL,
+		SchedulerAPIKey:       os.Getenv("SCHEDULER_WORKER_API_KEY"),
+		TempDir:               os.Getenv("WORKER_TEMP_DIR"),
+		HeartbeatEvery:        envDuration("WORKER_HEARTBEAT_INTERVAL", 10*time.Second),
+		PollInterval:          envDuration("WORKER_POLL_INTERVAL", 2*time.Second),
+		LeaseRenewInterval:    envDuration("WORKER_LEASE_RENEW_INTERVAL", 0),
+		JobLeaseDuration:      envDuration("WORKER_JOB_LEASE_DURATION", envDuration("JOB_LEASE_DURATION", 30*time.Minute)),
+		DefaultMaxJobDuration: envDuration("WORKER_DEFAULT_MAX_DURATION", envDuration("JOB_DEFAULT_MAX_DURATION", 2*time.Hour)),
 	}
 
 	var objStorage storage.ObjectStorage

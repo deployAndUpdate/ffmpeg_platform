@@ -213,6 +213,9 @@ func detectSchemaVersion(dsn string) (uint, error) {
 	if columnExists(ctx, db, "jobs", "preset") {
 		version = 3
 	}
+	if columnExists(ctx, db, "jobs", "lease_generation") {
+		version = 4
+	}
 	return version, nil
 }
 

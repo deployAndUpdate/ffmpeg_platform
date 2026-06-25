@@ -33,7 +33,7 @@ migrate-backup:
 	DB_DSN=$(DB_DSN) go run ./cmd/migrate backup
 
 test-integration: test-db-up
-	TEST_DB_DSN=$(TEST_DB_DSN) go test -race -count=1 -p 1 -tags=integration ./internal/migrate/... ./internal/store/... ./internal/api/... ./internal/reaper/...
+	TEST_DB_DSN=$(TEST_DB_DSN) go test -race -count=1 -p 1 -tags=integration ./internal/migrate/... ./internal/store/... ./internal/api/... ./internal/worker/... ./internal/reaper/...
 
 test-all: test test-integration
 

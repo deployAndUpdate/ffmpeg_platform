@@ -109,10 +109,10 @@ func TestClientSubmitJobResult(t *testing.T) {
 
 	client := NewClient(srv.URL)
 	logs := []types.JobLogEntry{{Stream: "stdout", Line: "done"}}
-	if err := client.SubmitJobResult(context.Background(), "w1", "j1", true, logs); err != nil {
+	if err := client.SubmitJobResult(context.Background(), "w1", "j1", 1, true, logs); err != nil {
 		t.Fatal(err)
 	}
-	if payload["worker_id"] != "w1" || payload["job_id"] != "j1" || payload["success"] != true {
+	if payload["worker_id"] != "w1" || payload["job_id"] != "j1" || payload["success"] != true || payload["lease_generation"] != float64(1) {
 		t.Fatalf("unexpected payload: %+v", payload)
 	}
 }

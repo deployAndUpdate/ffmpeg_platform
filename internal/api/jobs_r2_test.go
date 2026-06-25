@@ -47,6 +47,13 @@ func (m *mockObjectStorage) Exists(ctx context.Context, key string) (bool, error
 	}
 	return true, nil
 }
+func (m *mockObjectStorage) StatObject(ctx context.Context, key string) (storage.ObjectStat, error) {
+	ok, err := m.Exists(ctx, key)
+	if err != nil || !ok {
+		return storage.ObjectStat{}, errors.New("not found")
+	}
+	return storage.ObjectStat{Size: 1024}, nil
+}
 func (m *mockObjectStorage) Download(context.Context, string, string) error { return nil }
 func (m *mockObjectStorage) Upload(context.Context, string, string) error   { return nil }
 func (m *mockObjectStorage) UploadReader(context.Context, string, io.Reader, int64, string) error {
