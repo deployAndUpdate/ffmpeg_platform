@@ -50,12 +50,13 @@ func (s *Store) CreateJob(ctx context.Context, job *types.Job) error {
 		job.Storage = types.StorageLocal
 	}
 	const q = `
-INSERT INTO jobs (id, input_path, output_path, ffmpeg_args, storage, status, attempt, max_attempts, created_at, updated_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())`
+INSERT INTO jobs (id, input_path, output_path, preset, ffmpeg_args, storage, status, attempt, max_attempts, created_at, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW())`
 	_, err := s.db.ExecContext(ctx, q,
 		job.ID,
 		job.InputPath,
 		job.OutputPath,
+		nullString(job.Preset),
 		job.FFmpegArgs,
 		job.Storage,
 		job.Status,
@@ -88,11 +89,18 @@ WHERE id = $1 AND status = 'NEW'`
 // GetJob returns a job by ID.
 func (s *Store) GetJob(ctx context.Context, id string) (*types.Job, error) {
 	const q = `
-SELECT id, input_path, output_path, ffmpeg_args, storage, status, assigned_worker_id,
+SELECT id, input_path, output_path, preset, ffmpeg_args, storage, status, assigned_worker_id,
        attempt, max_attempts, lease_expires_at, created_at, started_at, finished_at, updated_at
 FROM jobs
 WHERE id = $1`
 	return scanJob(s.db.QueryRowContext(ctx, q, id))
+}
+
+func nullString(s string) sql.NullString {
+	if s == "" {
+		return sql.NullString{}
+	}
+	return sql.NullString{String: s, Valid: true}
 }
 
 // RegisterWorker inserts or updates worker info, marking it ACTIVE and refreshing heartbeat.

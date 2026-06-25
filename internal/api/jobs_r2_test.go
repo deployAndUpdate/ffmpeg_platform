@@ -88,9 +88,9 @@ func TestJobsInitSuccess(t *testing.T) {
 	defer srv.Close()
 
 	resp := jsonPost(t, srv.URL+"/jobs/init", map[string]any{
-		"ffmpeg_args":     "-vn -acodec libmp3lame -b:a 192k",
-		"input_filename":  "clip.mp4",
-		"output_ext":      "mp3",
+		"preset":         "mp3_192k",
+		"input_filename": "clip.mp4",
+		"output_ext":     "mp3",
 	})
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusCreated {
@@ -117,6 +117,12 @@ func TestJobsInitSuccess(t *testing.T) {
 	}
 	if captured == nil || !strings.HasPrefix(captured.InputPath, "jobs/") {
 		t.Fatalf("unexpected captured job: %+v", captured)
+	}
+	if captured.Preset != "mp3_192k" {
+		t.Fatalf("preset = %q, want mp3_192k", captured.Preset)
+	}
+	if captured.FFmpegArgs != "-vn -acodec libmp3lame -b:a 192k" {
+		t.Fatalf("ffmpeg_args = %q", captured.FFmpegArgs)
 	}
 }
 

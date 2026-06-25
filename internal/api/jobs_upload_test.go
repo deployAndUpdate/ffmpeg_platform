@@ -39,7 +39,7 @@ func TestCreateJobFromUploadSuccess(t *testing.T) {
 
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
-	_ = writer.WriteField("ffmpeg_args", "-vn -acodec libmp3lame -b:a 192k")
+	_ = writer.WriteField("preset", "mp3_192k")
 	_ = writer.WriteField("output_ext", "mp3")
 	part, err := writer.CreateFormFile("file", "clip.mp4")
 	if err != nil {
@@ -84,6 +84,9 @@ func TestCreateJobFromUploadSuccess(t *testing.T) {
 	}
 	if captured == nil || captured.ID != out.ID {
 		t.Fatal("expected store.CreateJob with response id")
+	}
+	if captured.Preset != "mp3_192k" {
+		t.Fatalf("preset = %q, want mp3_192k", captured.Preset)
 	}
 	if obj.uploadedKey == "" || obj.uploadedSize != int64(len(payload)) {
 		t.Fatalf("upload = key %q size %d", obj.uploadedKey, obj.uploadedSize)

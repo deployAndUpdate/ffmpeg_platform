@@ -136,7 +136,7 @@ func routeRole(path string) (Role, bool) {
 		return 0, false
 	case strings.HasPrefix(path, "/workers/"):
 		return RoleWorker, true
-	case path == "/jobs", strings.HasPrefix(path, "/jobs/"):
+	case path == "/presets", path == "/jobs", strings.HasPrefix(path, "/jobs/"):
 		return RoleClient, true
 	default:
 		return RoleAdmin, true

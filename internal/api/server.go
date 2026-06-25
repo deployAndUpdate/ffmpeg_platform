@@ -63,6 +63,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/health", s.handleHealth)
+	s.mux.HandleFunc("/presets", s.handlePresets)
 	s.mux.HandleFunc("/jobs/init", s.handleJobsInit)
 	s.mux.HandleFunc("/jobs", s.handleJobs)
 	s.mux.HandleFunc("/jobs/", s.handleJobByID)
@@ -184,6 +185,7 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 	type req struct {
 		InputPath   string `json:"input_path"`
 		OutputPath  string `json:"output_path"`
+		Preset      string `json:"preset"`
 		FFmpegArgs  string `json:"ffmpeg_args"`
 		MaxAttempts int    `json:"max_attempts"`
 	}
@@ -192,8 +194,14 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid json", http.StatusBadRequest)
 		return
 	}
-	if body.InputPath == "" || body.OutputPath == "" || body.FFmpegArgs == "" {
-		http.Error(w, "input_path, output_path, ffmpeg_args are required", http.StatusBadRequest)
+	if body.InputPath == "" || body.OutputPath == "" {
+		http.Error(w, "input_path and output_path are required", http.StatusBadRequest)
+		return
+	}
+	spec, err := resolveTranscodeSpec(body.Preset, body.FFmpegArgs, outputExtFromPath(body.OutputPath))
+	if err != nil {
+		status, msg := transcodeSpecHTTPError(err)
+		http.Error(w, msg, status)
 		return
 	}
 	if body.MaxAttempts <= 0 {
@@ -205,7 +213,8 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 		ID:          id,
 		InputPath:   body.InputPath,
 		OutputPath:  body.OutputPath,
-		FFmpegArgs:  body.FFmpegArgs,
+		Preset:      spec.Preset,
+		FFmpegArgs:  spec.FFmpegArgs,
 		Storage:     types.StorageLocal,
 		Status:      types.JobStatusQueued,
 		Attempt:     0,

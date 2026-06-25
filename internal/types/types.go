@@ -37,6 +37,7 @@ type Job struct {
 	ID               string      `json:"id"`
 	InputPath        string      `json:"input_path"`
 	OutputPath       string      `json:"output_path"`
+	Preset           string      `json:"preset,omitempty"`
 	FFmpegArgs       string      `json:"ffmpeg_args"`
 	Storage          StorageMode `json:"storage"`
 	Status           JobStatus   `json:"status"`

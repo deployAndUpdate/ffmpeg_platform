@@ -29,7 +29,7 @@ func TestJobLifecycleSmoke(t *testing.T) {
 	createResp := postJSON(t, srv.URL+"/jobs", map[string]any{
 		"input_path":  "/data/in.mp4",
 		"output_path": "/data/out.mp4",
-		"ffmpeg_args": "-c:v libx264",
+		"preset":      "h264_crf23",
 	})
 	defer createResp.Body.Close()
 	if createResp.StatusCode != http.StatusCreated {

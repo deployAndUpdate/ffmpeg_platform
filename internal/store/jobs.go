@@ -32,7 +32,7 @@ SET status = 'RUNNING',
     updated_at = NOW()
 FROM next_job
 WHERE j.id = next_job.id
-RETURNING j.id, j.input_path, j.output_path, j.ffmpeg_args, j.storage, j.status, j.assigned_worker_id,
+RETURNING j.id, j.input_path, j.output_path, j.preset, j.ffmpeg_args, j.storage, j.status, j.assigned_worker_id,
           j.attempt, j.max_attempts, j.lease_expires_at, j.created_at, j.started_at, j.finished_at, j.updated_at`
 
 	leaseSeconds := int64(lease.Seconds())
@@ -159,6 +159,7 @@ func insertJobLogsTx(ctx context.Context, tx *sql.Tx, jobID string, logs []types
 func scanJob(row scanner) (*types.Job, error) {
 	var j types.Job
 	var assigned sql.NullString
+	var preset sql.NullString
 	var lease sql.NullTime
 	var started sql.NullTime
 	var finished sql.NullTime
@@ -168,6 +169,7 @@ func scanJob(row scanner) (*types.Job, error) {
 		&j.ID,
 		&j.InputPath,
 		&j.OutputPath,
+		&preset,
 		&j.FFmpegArgs,
 		&storage,
 		&j.Status,
@@ -183,6 +185,9 @@ func scanJob(row scanner) (*types.Job, error) {
 		return nil, err
 	}
 	j.Storage = types.StorageMode(storage)
+	if preset.Valid {
+		j.Preset = preset.String
+	}
 	if assigned.Valid {
 		j.AssignedWorkerID = &assigned.String
 	}

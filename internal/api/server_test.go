@@ -129,7 +129,9 @@ func TestCreateJobValidation(t *testing.T) {
 		{"method not allowed", http.MethodGet, "", http.StatusMethodNotAllowed},
 		{"invalid json", http.MethodPost, "{", http.StatusBadRequest},
 		{"missing fields", http.MethodPost, `{}`, http.StatusBadRequest},
-		{"missing ffmpeg_args", http.MethodPost, `{"input_path":"/in","output_path":"/out"}`, http.StatusBadRequest},
+		{"missing transcode spec", http.MethodPost, `{"input_path":"/in","output_path":"/out"}`, http.StatusBadRequest},
+		{"both preset and ffmpeg_args", http.MethodPost, `{"input_path":"/in","output_path":"/out.mp4","preset":"h264_crf23","ffmpeg_args":"-c copy"}`, http.StatusBadRequest},
+		{"unknown preset", http.MethodPost, `{"input_path":"/in","output_path":"/out.mp4","preset":"nope"}`, http.StatusBadRequest},
 	}
 
 	for _, tt := range tests {
@@ -148,6 +150,74 @@ func TestCreateJobValidation(t *testing.T) {
 				t.Fatalf("status = %d, want %d", resp.StatusCode, tt.wantStatus)
 			}
 		})
+	}
+}
+
+func TestCreateJobWithPreset(t *testing.T) {
+	var captured *types.Job
+	st := &mockStore{
+		createJobFn: func(_ context.Context, job *types.Job) error {
+			captured = job
+			job.CreatedAt = time.Now().UTC()
+			job.UpdatedAt = job.CreatedAt
+			return nil
+		},
+	}
+	srv := newTestServer(st)
+	defer srv.Close()
+
+	resp := jsonPost(t, srv.URL+"/jobs", map[string]any{
+		"input_path":  "/data/in.mp4",
+		"output_path": "/data/out.mp4",
+		"preset":      "h264_crf23",
+	})
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status = %d, body = %s", resp.StatusCode, body)
+	}
+
+	var out types.Job
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Preset != "h264_crf23" {
+		t.Fatalf("preset = %q", out.Preset)
+	}
+	if out.FFmpegArgs != "-c:v libx264 -crf 23 -preset medium" {
+		t.Fatalf("ffmpeg_args = %q", out.FFmpegArgs)
+	}
+	if captured == nil || captured.Preset != "h264_crf23" {
+		t.Fatalf("captured = %+v", captured)
+	}
+}
+
+func TestListPresets(t *testing.T) {
+	srv := newTestServer(&mockStore{})
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/presets")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+
+	var out struct {
+		Presets []struct {
+			ID          string   `json:"id"`
+			Description string   `json:"description"`
+			OutputExts  []string `json:"output_exts"`
+		} `json:"presets"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Presets) == 0 {
+		t.Fatal("expected presets")
 	}
 }
 

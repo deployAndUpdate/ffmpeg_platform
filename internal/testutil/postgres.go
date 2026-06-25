@@ -83,24 +83,30 @@ func applyMigration(dsn string) error {
 	if err := execMigrationFile(ctx, db, "001_init.sql"); err != nil {
 		return err
 	}
-	return execMigrationFile(ctx, db, "002_storage.sql")
+	if err := execMigrationFile(ctx, db, "002_storage.sql"); err != nil {
+		return err
+	}
+	return execMigrationFile(ctx, db, "003_preset.sql")
 }
 
 func execMigrationFile(ctx context.Context, db *sql.DB, name string) error {
-	checkColumn := name == "002_storage.sql"
-	if checkColumn {
+	columnChecks := map[string]string{
+		"002_storage.sql": "storage",
+		"003_preset.sql":  "preset",
+	}
+	if columnName, ok := columnChecks[name]; ok {
 		var exists bool
 		if err := db.QueryRowContext(ctx, `
 SELECT EXISTS (
 	SELECT FROM information_schema.columns
-	WHERE table_schema = 'public' AND table_name = 'jobs' AND column_name = 'storage'
-)`).Scan(&exists); err != nil {
+	WHERE table_schema = 'public' AND table_name = 'jobs' AND column_name = $1
+)`, columnName).Scan(&exists); err != nil {
 			return err
 		}
 		if exists {
 			return nil
 		}
-	} else {
+	} else if name == "001_init.sql" {
 		var exists bool
 		if err := db.QueryRowContext(ctx, `
 SELECT EXISTS (
