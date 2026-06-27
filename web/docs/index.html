@@ -526,18 +526,26 @@
         </tr>
       </table>
       <pre><code>{ "presets": [
-  { "id": "h264_crf23", "description": "H.264 video, CRF 23, medium x264 preset", "output_exts": ["mp4", "mkv"] },
+  { "id": "h264_web", "description": "H.264 + AAC MP4 optimized for web streaming (faststart)", "output_exts": ["mp4"] },
   { "id": "mp3_192k", "description": "Extract audio as MP3 192 kbps", "output_exts": ["mp3"] }
 ] }</code></pre>
       <table>
         <thead><tr><th>ID</th><th data-i18n="api.presets.col.desc">Описание</th><th data-i18n="api.presets.col.exts">output_ext</th></tr></thead>
         <tbody>
+          <tr><td><code>aac_128k</code></td><td>AAC 128 kbps</td><td>m4a, mp4</td></tr>
+          <tr><td><code>copy_audio</code></td><td>Извлечение аудио без перекодирования</td><td>m4a, mkv, mp4, ogg, webm</td></tr>
+          <tr><td><code>copy_video</code></td><td>Remux без перекодирования</td><td>mp4, mkv, webm</td></tr>
           <tr><td><code>h264_crf23</code></td><td>H.264, CRF 23, medium</td><td>mp4, mkv</td></tr>
           <tr><td><code>h264_crf28</code></td><td>H.264, CRF 28, fast</td><td>mp4, mkv</td></tr>
-          <tr><td><code>copy_video</code></td><td>Remux без перекодирования</td><td>mp4, mkv, webm</td></tr>
-          <tr><td><code>mp3_192k</code></td><td>MP3 192 kbps</td><td>mp3</td></tr>
+          <tr><td><code>h264_web</code></td><td>H.264 + AAC, MP4 для web (faststart)</td><td>mp4</td></tr>
+          <tr><td><code>h265_crf28</code></td><td>HEVC/H.265, CRF 28, medium</td><td>mp4, mkv</td></tr>
           <tr><td><code>mp3_128k</code></td><td>MP3 128 kbps</td><td>mp3</td></tr>
-          <tr><td><code>aac_128k</code></td><td>AAC 128 kbps</td><td>m4a, mp4</td></tr>
+          <tr><td><code>mp3_192k</code></td><td>MP3 192 kbps</td><td>mp3</td></tr>
+          <tr><td><code>opus_128k</code></td><td>Opus 128 kbps</td><td>ogg, opus, webm</td></tr>
+          <tr><td><code>scale_1080p_h264</code></td><td>Масштаб до 1080p, H.264 + AAC</td><td>mp4, mkv</td></tr>
+          <tr><td><code>scale_720p_h264</code></td><td>Масштаб до 720p, H.264 + AAC</td><td>mp4, mkv</td></tr>
+          <tr><td><code>strip_audio</code></td><td>Видео без аудио (copy video)</td><td>mp4, mkv, webm</td></tr>
+          <tr><td><code>wav_pcm</code></td><td>Lossless PCM WAV</td><td>wav</td></tr>
         </tbody>
       </table>
 

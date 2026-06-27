@@ -58,6 +58,54 @@ var registry = map[string]Preset{
 		FFmpegArgs:  "-vn -c:a aac -b:a 128k",
 		OutputExts:  []string{"m4a", "mp4"},
 	},
+	"copy_audio": {
+		ID:          "copy_audio",
+		Description: "Extract audio stream without re-encoding",
+		FFmpegArgs:  "-vn -c:a copy",
+		OutputExts:  []string{"m4a", "mkv", "mp4", "ogg", "webm"},
+	},
+	"h264_web": {
+		ID:          "h264_web",
+		Description: "H.264 + AAC MP4 optimized for web streaming (faststart)",
+		FFmpegArgs:  "-c:v libx264 -crf 23 -preset medium -c:a aac -b:a 128k -movflags +faststart",
+		OutputExts:  []string{"mp4"},
+	},
+	"h265_crf28": {
+		ID:          "h265_crf28",
+		Description: "HEVC/H.265 video, CRF 28, medium x265 preset",
+		FFmpegArgs:  "-c:v libx265 -crf 28 -preset medium -tag:v hvc1",
+		OutputExts:  []string{"mp4", "mkv"},
+	},
+	"opus_128k": {
+		ID:          "opus_128k",
+		Description: "Extract audio as Opus 128 kbps",
+		FFmpegArgs:  "-vn -c:a libopus -b:a 128k",
+		OutputExts:  []string{"ogg", "opus", "webm"},
+	},
+	"scale_1080p_h264": {
+		ID:          "scale_1080p_h264",
+		Description: "Scale to 1080p height, H.264 CRF 23 + AAC 128k",
+		FFmpegArgs:  "-vf scale=-2:1080 -c:v libx264 -crf 23 -preset medium -c:a aac -b:a 128k",
+		OutputExts:  []string{"mp4", "mkv"},
+	},
+	"scale_720p_h264": {
+		ID:          "scale_720p_h264",
+		Description: "Scale to 720p height, H.264 CRF 23 + AAC 128k",
+		FFmpegArgs:  "-vf scale=-2:720 -c:v libx264 -crf 23 -preset medium -c:a aac -b:a 128k",
+		OutputExts:  []string{"mp4", "mkv"},
+	},
+	"strip_audio": {
+		ID:          "strip_audio",
+		Description: "Copy video stream without audio",
+		FFmpegArgs:  "-an -c:v copy",
+		OutputExts:  []string{"mp4", "mkv", "webm"},
+	},
+	"wav_pcm": {
+		ID:          "wav_pcm",
+		Description: "Extract audio as lossless PCM WAV",
+		FFmpegArgs:  "-vn -acodec pcm_s16le",
+		OutputExts:  []string{"wav"},
+	},
 }
 
 // Resolve returns a preset by id.
@@ -109,12 +157,20 @@ func MaxDurationSeconds(id string) int {
 }
 
 var maxDurationSeconds = map[string]time.Duration{
-	"h264_crf23": 4 * time.Hour,
-	"h264_crf28": 4 * time.Hour,
-	"copy_video": 30 * time.Minute,
-	"mp3_192k":   1 * time.Hour,
-	"mp3_128k":   1 * time.Hour,
-	"aac_128k":   1 * time.Hour,
+	"h264_crf23":       4 * time.Hour,
+	"h264_crf28":       4 * time.Hour,
+	"h264_web":         4 * time.Hour,
+	"h265_crf28":       4 * time.Hour,
+	"scale_720p_h264":  4 * time.Hour,
+	"scale_1080p_h264": 4 * time.Hour,
+	"copy_video":       30 * time.Minute,
+	"copy_audio":       30 * time.Minute,
+	"strip_audio":      30 * time.Minute,
+	"mp3_192k":         1 * time.Hour,
+	"mp3_128k":         1 * time.Hour,
+	"aac_128k":         1 * time.Hour,
+	"opus_128k":        1 * time.Hour,
+	"wav_pcm":          1 * time.Hour,
 }
 
 func normalizeExt(ext string) string {
