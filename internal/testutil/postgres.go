@@ -76,6 +76,6 @@ func resetTables(ctx context.Context, dsn string) error {
 	}
 	defer db.Close()
 
-	_, err = db.ExecContext(ctx, `TRUNCATE job_log_artifacts, job_outbox, jobs, workers RESTART IDENTITY CASCADE`)
+	_, err = db.ExecContext(ctx, `TRUNCATE job_outbox, jobs, workers RESTART IDENTITY CASCADE`)
 	return err
 }

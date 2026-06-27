@@ -201,8 +201,13 @@ func detectSchemaVersion(dsn string) (uint, error) {
 	defer cancel()
 
 	if !relationExists(ctx, db, "workers", "BASE TABLE") ||
-		!relationExists(ctx, db, "jobs", "BASE TABLE") ||
-		!relationExists(ctx, db, "job_log_artifacts", "BASE TABLE") {
+		!relationExists(ctx, db, "jobs", "BASE TABLE") {
+		return 0, nil
+	}
+
+	hasJobLogs := relationExists(ctx, db, "job_logs", "BASE TABLE")
+	hasLogArtifacts := relationExists(ctx, db, "job_log_artifacts", "BASE TABLE")
+	if !hasJobLogs && !hasLogArtifacts {
 		return 0, nil
 	}
 
@@ -219,7 +224,7 @@ func detectSchemaVersion(dsn string) (uint, error) {
 	if relationExists(ctx, db, "job_outbox", "BASE TABLE") {
 		version = 5
 	}
-	if !relationExists(ctx, db, "job_logs", "BASE TABLE") {
+	if hasLogArtifacts && !hasJobLogs {
 		version = 6
 	}
 	return version, nil
