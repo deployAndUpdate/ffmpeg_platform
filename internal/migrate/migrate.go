@@ -202,7 +202,7 @@ func detectSchemaVersion(dsn string) (uint, error) {
 
 	if !relationExists(ctx, db, "workers", "BASE TABLE") ||
 		!relationExists(ctx, db, "jobs", "BASE TABLE") ||
-		!relationExists(ctx, db, "job_logs", "BASE TABLE") {
+		!relationExists(ctx, db, "job_log_artifacts", "BASE TABLE") {
 		return 0, nil
 	}
 
@@ -215,6 +215,12 @@ func detectSchemaVersion(dsn string) (uint, error) {
 	}
 	if columnExists(ctx, db, "jobs", "lease_generation") {
 		version = 4
+	}
+	if relationExists(ctx, db, "job_outbox", "BASE TABLE") {
+		version = 5
+	}
+	if !relationExists(ctx, db, "job_logs", "BASE TABLE") {
+		version = 6
 	}
 	return version, nil
 }

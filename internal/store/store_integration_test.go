@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"go_distributed_system/internal/storage"
 	"go_distributed_system/internal/store"
 	"go_distributed_system/internal/testutil"
 	"go_distributed_system/internal/types"
@@ -134,11 +135,13 @@ func TestFinishJobCompleted(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	logs := []types.JobLogEntry{
-		{Stream: "stdout", Line: "frame=100"},
-		{Stream: "stderr", Line: "warning"},
+	artifact := &types.JobLogArtifactInput{
+		Attempt:   claimed.Attempt,
+		ObjectKey: storage.LogObjectKey(jobID, claimed.Attempt),
+		Bytes:     128,
+		Lines:     2,
 	}
-	if err := st.FinishJob(ctx, jobID, workerID, claimed.LeaseGeneration, true, logs); err != nil {
+	if err := st.FinishJob(ctx, jobID, workerID, claimed.LeaseGeneration, true, artifact); err != nil {
 		t.Fatal(err)
 	}
 
@@ -150,12 +153,12 @@ func TestFinishJobCompleted(t *testing.T) {
 		t.Fatalf("status = %q, want COMPLETED", got.Status)
 	}
 
-	storedLogs, err := st.GetJobLogs(ctx, jobID)
+	artifacts, err := st.ListLogArtifacts(ctx, jobID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(storedLogs) != 2 {
-		t.Fatalf("logs len = %d, want 2", len(storedLogs))
+	if len(artifacts) != 1 || artifacts[0].Lines != 2 {
+		t.Fatalf("artifacts = %+v", artifacts)
 	}
 }
 

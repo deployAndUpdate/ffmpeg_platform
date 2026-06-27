@@ -16,12 +16,12 @@ type JobStore interface {
 	QueueJob(ctx context.Context, jobID string) error
 	GetJob(ctx context.Context, id string) (*types.Job, error)
 	GetJobByIdempotencyKey(ctx context.Context, key string) (*types.Job, error)
-	GetJobLogs(ctx context.Context, jobID string) ([]types.JobLog, error)
+	ListLogArtifacts(ctx context.Context, jobID string) ([]types.JobLogArtifact, error)
 	RegisterWorker(ctx context.Context, w *types.Worker) error
 	Heartbeat(ctx context.Context, workerID string, ts time.Time) error
 	ClaimJob(ctx context.Context, jobID, workerID string, lease time.Duration) (*types.Job, error)
 	RenewLease(ctx context.Context, jobID, workerID string, leaseGeneration int64, lease time.Duration) (*types.Job, error)
-	FinishJob(ctx context.Context, jobID, workerID string, leaseGeneration int64, success bool, logs []types.JobLogEntry) error
+	FinishJob(ctx context.Context, jobID, workerID string, leaseGeneration int64, success bool, artifact *types.JobLogArtifactInput) error
 
 	ListJobs(ctx context.Context, filter store.ListJobsFilter) (store.ListJobsResult, error)
 	ListWorkers(ctx context.Context) ([]types.WorkerStats, error)

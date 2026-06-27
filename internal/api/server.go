@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"go_distributed_system/internal/api/auth"
+	"go_distributed_system/internal/joblogs"
 	"go_distributed_system/internal/queue"
 	"go_distributed_system/internal/store"
 	"go_distributed_system/internal/storage"
@@ -303,7 +304,12 @@ func (s *Server) getJob(w http.ResponseWriter, r *http.Request, id string) {
 }
 
 func (s *Server) getJobLogs(w http.ResponseWriter, r *http.Request, id string) {
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	if s.storage == nil {
+		http.Error(w, "object storage is not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
 	if _, err := s.store.GetJob(ctx, id); err != nil {
@@ -316,9 +322,16 @@ func (s *Server) getJobLogs(w http.ResponseWriter, r *http.Request, id string) {
 		return
 	}
 
-	logs, err := s.store.GetJobLogs(ctx, id)
+	artifacts, err := s.store.ListLogArtifacts(ctx, id)
 	if err != nil {
-		log.Printf("get job logs: %v", err)
+		log.Printf("list log artifacts: %v", err)
+		http.Error(w, "failed to get job logs", http.StatusInternalServerError)
+		return
+	}
+
+	logs, err := joblogs.LoadAll(ctx, s.storage, artifacts)
+	if err != nil {
+		log.Printf("load job logs: %v", err)
 		http.Error(w, "failed to get job logs", http.StatusInternalServerError)
 		return
 	}
@@ -484,10 +497,35 @@ func (s *Server) workerJobResult(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
 	defer cancel()
 
-	if err := s.store.FinishJob(ctx, body.JobID, body.WorkerID, body.LeaseGeneration, body.Success, body.Logs); err != nil {
+	var artifact *types.JobLogArtifactInput
+	if len(body.Logs) > 0 {
+		if s.storage == nil {
+			http.Error(w, "object storage is not configured", http.StatusServiceUnavailable)
+			return
+		}
+		job, err := s.store.GetJob(ctx, body.JobID)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				http.Error(w, "job not found", http.StatusNotFound)
+				return
+			}
+			log.Printf("get job for logs upload: %v", err)
+			http.Error(w, "failed to finish job", http.StatusInternalServerError)
+			return
+		}
+		meta, err := joblogs.Upload(ctx, s.storage, body.JobID, job.Attempt, body.Logs)
+		if err != nil {
+			log.Printf("upload job logs: %v", err)
+			http.Error(w, "failed to store job logs", http.StatusInternalServerError)
+			return
+		}
+		artifact = &meta
+	}
+
+	if err := s.store.FinishJob(ctx, body.JobID, body.WorkerID, body.LeaseGeneration, body.Success, artifact); err != nil {
 		if errors.Is(err, store.ErrJobNotAssigned) {
 			http.Error(w, "job not assigned to worker or not running", http.StatusConflict)
 			return

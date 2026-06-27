@@ -22,6 +22,7 @@ type ObjectStorage interface {
 	Exists(ctx context.Context, key string) (bool, error)
 	StatObject(ctx context.Context, key string) (ObjectStat, error)
 	Download(ctx context.Context, key, localPath string) error
+	OpenObject(ctx context.Context, key string) (io.ReadCloser, error)
 	Upload(ctx context.Context, localPath, key string) error
 	UploadReader(ctx context.Context, key string, r io.Reader, size int64, contentType string) error
 }

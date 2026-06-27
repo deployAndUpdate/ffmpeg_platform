@@ -44,10 +44,11 @@ RETURNING ` + jobSelectColumns
 	return job, nil
 }
 
-// FinishJob marks a running job as completed or failed/dispatched-for-retry and stores logs.
+// FinishJob marks a running job as completed or failed/dispatched-for-retry.
+// When artifact is non-nil, metadata for logs already stored in object storage is recorded.
 // leaseGeneration fences stale workers after reaper/re-claim.
 // On success, a late finish is accepted when the job was moved to DISPATCHED but not yet re-claimed.
-func (s *Store) FinishJob(ctx context.Context, jobID, workerID string, leaseGeneration int64, success bool, logs []types.JobLogEntry) error {
+func (s *Store) FinishJob(ctx context.Context, jobID, workerID string, leaseGeneration int64, success bool, artifact *types.JobLogArtifactInput) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
@@ -76,7 +77,7 @@ FOR UPDATE`
 	}
 
 	if status == types.JobStatusCompleted {
-		if err = insertJobLogsTx(ctx, tx, jobID, logs); err != nil {
+		if err = insertLogArtifactTx(ctx, tx, jobID, attempt, artifact); err != nil {
 			return err
 		}
 		return tx.Commit()
@@ -132,20 +133,20 @@ WHERE id = $1`
 		}
 	}
 
-	if err = insertJobLogsTx(ctx, tx, jobID, logs); err != nil {
+	if err = insertLogArtifactTx(ctx, tx, jobID, attempt, artifact); err != nil {
 		return err
 	}
 
 	return tx.Commit()
 }
 
-// GetJobLogs returns log lines for a job ordered by timestamp.
-func (s *Store) GetJobLogs(ctx context.Context, jobID string) ([]types.JobLog, error) {
+// ListLogArtifacts returns R2 log artifact metadata for a job ordered by attempt.
+func (s *Store) ListLogArtifacts(ctx context.Context, jobID string) ([]types.JobLogArtifact, error) {
 	const q = `
-SELECT id, ts, stream, line
-FROM job_logs
+SELECT id, job_id, attempt, object_key, bytes, lines, created_at
+FROM job_log_artifacts
 WHERE job_id = $1
-ORDER BY ts ASC, id ASC`
+ORDER BY attempt ASC, id ASC`
 
 	rows, err := s.db.QueryContext(ctx, q, jobID)
 	if err != nil {
@@ -153,15 +154,15 @@ ORDER BY ts ASC, id ASC`
 	}
 	defer rows.Close()
 
-	var logs []types.JobLog
+	var out []types.JobLogArtifact
 	for rows.Next() {
-		var entry types.JobLog
-		if err := rows.Scan(&entry.ID, &entry.TS, &entry.Stream, &entry.Line); err != nil {
+		var art types.JobLogArtifact
+		if err := rows.Scan(&art.ID, &art.JobID, &art.Attempt, &art.ObjectKey, &art.Bytes, &art.Lines, &art.CreatedAt); err != nil {
 			return nil, err
 		}
-		logs = append(logs, entry)
+		out = append(out, art)
 	}
-	return logs, rows.Err()
+	return out, rows.Err()
 }
 
 // GetJobByIdempotencyKey returns a job created with the given idempotency key.
@@ -174,17 +175,23 @@ func (s *Store) GetJobByIdempotencyKey(ctx context.Context, key string) (*types.
 	return job, nil
 }
 
-func insertJobLogsTx(ctx context.Context, tx *sql.Tx, jobID string, logs []types.JobLogEntry) error {
-	if len(logs) == 0 {
+func insertLogArtifactTx(ctx context.Context, tx *sql.Tx, jobID string, attempt int, artifact *types.JobLogArtifactInput) error {
+	if artifact == nil {
 		return nil
 	}
-	const q = `INSERT INTO job_logs (job_id, stream, line) VALUES ($1, $2, $3)`
-	for _, entry := range logs {
-		if _, err := tx.ExecContext(ctx, q, jobID, entry.Stream, entry.Line); err != nil {
-			return err
-		}
+	if artifact.Attempt != attempt {
+		return fmt.Errorf("log artifact attempt %d does not match job attempt %d", artifact.Attempt, attempt)
 	}
-	return nil
+	const q = `
+INSERT INTO job_log_artifacts (job_id, attempt, object_key, bytes, lines)
+VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT (job_id, attempt) DO UPDATE
+SET object_key = EXCLUDED.object_key,
+    bytes = EXCLUDED.bytes,
+    lines = EXCLUDED.lines,
+    created_at = NOW()`
+	_, err := tx.ExecContext(ctx, q, jobID, attempt, artifact.ObjectKey, artifact.Bytes, artifact.Lines)
+	return err
 }
 
 func scanJob(row scanner) (*types.Job, error) {

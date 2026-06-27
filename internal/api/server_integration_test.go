@@ -15,6 +15,7 @@ import (
 
 	"go_distributed_system/internal/api"
 	"go_distributed_system/internal/api/auth"
+	"go_distributed_system/internal/joblogs"
 	"go_distributed_system/internal/outbox"
 	"go_distributed_system/internal/storage"
 	"go_distributed_system/internal/store"
@@ -54,7 +55,8 @@ func TestJobLifecycleE2E_RabbitOutbox(t *testing.T) {
 	relay := outbox.New(st, rabbit, outbox.Config{Batch: 10, Enabled: true})
 	testutil.RelayUntilOutboxEmpty(t, relay, st.CountUnpublishedOutbox)
 
-	srv := httptest.NewServer(api.NewServerWithStorageAuthAndRabbit(st, nil, storage.Config{}, auth.Config{}, rabbit))
+	obj := storage.NewMemory("integration")
+	srv := httptest.NewServer(api.NewServerWithStorageAuthAndRabbit(st, obj, storage.Config{}, auth.Config{}, rabbit))
 	defer srv.Close()
 
 	workerID := uuid.New().String()
@@ -109,7 +111,11 @@ verify:
 		t.Fatalf("output file missing: %v", err)
 	}
 
-	logs, err := st.GetJobLogs(ctx, jobID)
+	artifacts, err := st.ListLogArtifacts(ctx, jobID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	logs, err := joblogs.LoadAll(ctx, obj, artifacts)
 	if err != nil {
 		t.Fatal(err)
 	}
