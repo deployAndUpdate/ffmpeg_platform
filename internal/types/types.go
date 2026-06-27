@@ -16,12 +16,11 @@ const (
 type JobStatus string
 
 const (
-	JobStatusNew       JobStatus = "NEW"
-	JobStatusQueued    JobStatus = "QUEUED"
-	JobStatusRunning   JobStatus = "RUNNING"
-	JobStatusCompleted JobStatus = "COMPLETED"
-	JobStatusFailed    JobStatus = "FAILED"
-	JobStatusRetry     JobStatus = "RETRY"
+	JobStatusNew        JobStatus = "NEW"
+	JobStatusDispatched JobStatus = "DISPATCHED"
+	JobStatusRunning    JobStatus = "RUNNING"
+	JobStatusCompleted  JobStatus = "COMPLETED"
+	JobStatusFailed     JobStatus = "FAILED"
 )
 
 // WorkerStatus denotes worker availability.

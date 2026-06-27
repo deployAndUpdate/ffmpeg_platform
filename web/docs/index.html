@@ -329,13 +329,13 @@
       <h2 data-i18n="hero.title">Distributed Video Compression Platform</h2>
       <p data-i18n="hero.desc">
         Отказоустойчивая платформа для запуска <code>ffmpeg</code> на нескольких узлах.
-        Планировщик (Scheduler) принимает задания через HTTP API, воркеры забирают их из очереди PostgreSQL
-        и выполняют транскодирование.
+        Планировщик (Scheduler) принимает задания через HTTP API; dispatch идёт через RabbitMQ (transactional outbox),
+        воркеры потребляют сообщения и выполняют транскодирование.
       </p>
       <div class="hero-meta">
         <span class="badge badge-mvp">MVP</span>
         <span class="badge badge-done">Go 1.22</span>
-        <span class="badge badge-done">PostgreSQL</span>
+        <span class="badge badge-done">RabbitMQ</span>
       </div>
     </div>
 
@@ -386,9 +386,9 @@
       <ul>
         <li data-i18n="architecture.atLeastOnce"><strong>Effectively-once</strong> — lease renewal, skip готового output и <code>lease_generation</code> снижают дубли transcode; reaper остаётся safety net.</li>
         <li data-i18n="architecture.lease"><strong>Lease</strong> — при выдаче job устанавливается <code>lease_expires_at</code> (по умолчанию 30 мин, <code>JOB_LEASE_DURATION</code>). Воркер продлевает lease через <code>POST /workers/renew-lease</code> во время ffmpeg.</li>
-        <li data-i18n="architecture.reaper"><strong>Reaper</strong> — помечает воркеров без heartbeat как <code>DEAD</code> (timeout по умолчанию 50s) и возвращает <code>RUNNING</code> job с истёкшим lease или на <code>DEAD</code> воркере в <code>RETRY</code>/<code>FAILED</code>.</li>
+        <li data-i18n="architecture.reaper"><strong>Reaper</strong> — помечает воркеров без heartbeat как <code>DEAD</code> (timeout по умолчанию 50s) и возвращает <code>RUNNING</code> job с истёкшим lease или на <code>DEAD</code> воркере в outbox retry (<code>DISPATCHED</code>) или <code>FAILED</code>.</li>
         <li data-i18n="architecture.idempotency"><strong>Idempotency</strong> — заголовок <code>Idempotency-Key</code> на <code>POST /jobs</code>; воркер пропускает transcode, если output уже валиден.</li>
-        <li data-i18n="architecture.skipLocked"><strong>SKIP LOCKED</strong> — несколько воркеров могут безопасно конкурировать за задания без блокировок.</li>
+        <li data-i18n="architecture.outbox"><strong>Transactional outbox</strong> — dispatch в RabbitMQ атомарно с записью job; relay публикует из <code>job_outbox</code>.</li>
       </ul>
     </section>
 
@@ -425,30 +425,28 @@
 
     <section id="job-lifecycle">
       <h2 data-i18n="jobLifecycle.title">Жизненный цикл Job</h2>
-      <div class="diagram">NEW ──► QUEUED ──► RUNNING ──► COMPLETED
- (R2)      ▲            │  ▲
-            │            │  │ (reaper: lease / DEAD worker)
-            │            ▼  │
-         RETRY ◄──── FAILED (attempt ≥ max_attempts)</div>
+      <div class="diagram">NEW ──► DISPATCHED ──► RUNNING ──► COMPLETED
+ (R2)      ▲               │  ▲
+            │               │  │ (reaper: lease / DEAD worker → outbox retry)
+            │               ▼  │
+     outbox retry ◄──── FAILED (attempt ≥ max_attempts)</div>
       <table>
         <thead>
           <tr><th data-i18n="jobLifecycle.col.status">Статус</th><th data-i18n="jobLifecycle.col.desc">Описание</th></tr>
         </thead>
         <tbody>
           <tr><td><code>NEW</code></td><td data-i18n="jobLifecycle.new">R2 job создан, ожидает загрузки входного файла</td></tr>
-          <tr><td><code>QUEUED</code></td><td data-i18n="jobLifecycle.queued">Задание создано и ждёт воркера</td></tr>
+          <tr><td><code>DISPATCHED</code></td><td data-i18n="jobLifecycle.queued">Задание принято, ждёт/в пути в RabbitMQ (outbox relay)</td></tr>
           <tr><td><code>RUNNING</code></td><td data-i18n="jobLifecycle.running">Назначено воркеру, установлен lease</td></tr>
           <tr><td><code>COMPLETED</code></td><td data-i18n="jobLifecycle.completed">Успешно завершено (финальный статус)</td></tr>
           <tr><td><code>FAILED</code></td><td data-i18n="jobLifecycle.failed">Исчерпаны попытки (<code>attempt ≥ max_attempts</code>)</td></tr>
-          <tr><td><code>RETRY</code></td><td data-i18n="jobLifecycle.retry">Ошибка выполнения, будет повторно поставлено в очередь</td></tr>
         </tbody>
       </table>
       <p data-i18n="jobLifecycle.note">
-        Локальный job через <code>POST /jobs</code> сразу получает статус <code>QUEUED</code>.
-        R2 job через <code>POST /jobs/init</code> начинается со статуса <code>NEW</code> и переходит в <code>QUEUED</code> после <code>POST /jobs/{id}/submit</code>.
-        При выдаче воркеру <code>attempt</code> увеличивается на 1.
-        Reaper переводит <code>RUNNING</code> в <code>RETRY</code> или <code>FAILED</code> при истечении lease или падении воркера (без увеличения <code>attempt</code>).
-        Статус <code>NEW</code> зарезервирован в схеме БД, но пока не используется в коде.
+        Локальный job через <code>POST /jobs</code> сразу получает статус <code>DISPATCHED</code> (outbox → RabbitMQ).
+        R2 job через <code>POST /jobs/init</code> начинается со статуса <code>NEW</code> и переходит в <code>DISPATCHED</code> после <code>POST /jobs/{id}/submit</code>.
+        При claim воркером <code>attempt</code> увеличивается на 1.
+        Reaper переводит <code>RUNNING</code> в outbox retry (<code>DISPATCHED</code>) или <code>FAILED</code> при истечении lease или падении воркера (без увеличения <code>attempt</code>).
       </p>
     </section>
 
@@ -558,18 +556,19 @@
         </tr>
         <tr>
           <td><span class="method method-get">GET</span> <code>/ready</code></td>
-          <td data-i18n="api.health.readinessDesc">Readiness — ping PostgreSQL; HeadBucket R2, если R2 настроен</td>
+          <td data-i18n="api.health.readinessDesc">Readiness — ping PostgreSQL и RabbitMQ; HeadBucket R2 (ошибка R2 → degraded, но 200)</td>
         </tr>
       </table>
-      <p data-i18n="api.health.lbNote">Load balancer и Docker healthcheck используют <code>/ready</code>. В Kubernetes: liveness → <code>/health</code>, readiness → <code>/ready</code>.</p>
+      <p data-i18n="api.health.lbNote">Docker healthcheck scheduler использует <code>/health</code> (liveness). Load balancer readiness → <code>/ready</code>. В Kubernetes: liveness → <code>/health</code>, readiness → <code>/ready</code>.</p>
       <pre><code># GET /health — всегда 200, если процесс отвечает
 { "status": "ok" }
 
-# GET /ready — 200 если все critical checks ok, иначе 503
+# GET /ready — 200 если postgres и rabbitmq ok; r2 fail даёт degraded, но не 503
 {
   "status": "ok",
   "checks": {
     "postgres": { "status": "ok", "latency_ms": 3 },
+    "rabbitmq": { "status": "ok", "latency_ms": 5 },
     "r2": { "status": "ok", "latency_ms": 42 }
   }
 }</code></pre>
@@ -605,7 +604,7 @@
   "preset": "h264_crf23",
   "max_attempts": 3
 }</code></pre>
-      <p data-i18n="api.jobs.postNote">JSON: обязательные <code>input_path</code>, <code>output_path</code> и <code>preset</code> или <code>ffmpeg_args</code> (<code>storage: "local"</code>). Multipart (R2): поля <code>file</code>, <code>output_ext</code> и <code>preset</code> или <code>ffmpeg_args</code> — scheduler загружает файл в bucket и сразу ставит job в <code>QUEUED</code>.</p>
+      <p data-i18n="api.jobs.postNote">JSON: обязательные <code>input_path</code>, <code>output_path</code> и <code>preset</code> или <code>ffmpeg_args</code> (<code>storage: "local"</code>). Multipart (R2): поля <code>file</code>, <code>output_ext</code> и <code>preset</code> или <code>ffmpeg_args</code> — scheduler загружает файл в bucket и сразу ставит job в <code>DISPATCHED</code>.</p>
 
       <h4 data-i18n="api.upload.title">POST /jobs — multipart upload (R2)</h4>
       <p data-i18n="api.upload.intro">Один запрос «отправил файл и забыл». Требует настроенный R2 на scheduler. Content-Type: <code>multipart/form-data</code>.</p>
@@ -676,8 +675,8 @@ curl -s "http://localhost:8080/jobs/$JOB_ID" | jq '.download_url'</code></pre>
           <td data-i18n="api.workers.heartbeat">Heartbeat воркера</td>
         </tr>
         <tr>
-          <td><span class="method method-post">POST</span> <code>/workers/request-job</code></td>
-          <td data-i18n="api.workers.request">Запрос следующего job (SKIP LOCKED + lease)</td>
+          <td><span class="method method-post">POST</span> <code>/workers/claim-job</code></td>
+          <td data-i18n="api.workers.request">Claim job по job_id из RabbitMQ (lease + attempt++)</td>
         </tr>
         <tr>
           <td><span class="method method-post">POST</span> <code>/workers/renew-lease</code></td>
@@ -689,10 +688,10 @@ curl -s "http://localhost:8080/jobs/$JOB_ID" | jq '.download_url'</code></pre>
         </tr>
       </table>
 
-      <p data-i18n="api.workers.requestBody"><strong>POST /workers/request-job</strong>:</p>
-      <pre><code>{ "worker_id": "uuid" }
+      <p data-i18n="api.workers.requestBody"><strong>POST /workers/claim-job</strong>:</p>
+      <pre><code>{ "worker_id": "uuid", "job_id": "uuid" }
 
-// Ответ — job или null, если очередь пуста:
+// Ответ — job в статусе RUNNING или 409, если уже claimed:
 { "job": { ... } }</code></pre>
 
       <p data-i18n="api.workers.renewBody"><strong>POST /workers/renew-lease</strong>:</p>
@@ -799,7 +798,10 @@ curl -s "http://localhost:8080/jobs/$JOB_ID" | jq '.download_url'</code></pre>
           <tr><td><code>SCHEDULER_ADMIN_API_KEY</code></td><td data-i18n="env.no">нет</td><td>—</td><td data-i18n="env.scheduler.adminKey">Опциональный admin-ключ (все защищённые маршруты)</td></tr>
           <tr><td><code>MAX_UPLOAD_BYTES</code></td><td data-i18n="env.no">нет</td><td><code>536870912</code></td><td data-i18n="env.scheduler.maxUpload">Макс. размер multipart upload (байты)</td></tr>
           <tr><td><code>SCHEDULER_UPLOAD_TIMEOUT</code></td><td data-i18n="env.no">нет</td><td><code>30m</code></td><td data-i18n="env.scheduler.uploadTimeout">Таймаут приёма файла через API</td></tr>
-          <tr><td><code>JOB_LEASE_DURATION</code></td><td data-i18n="env.no">нет</td><td><code>30m</code></td><td data-i18n="env.job.lease">Длительность lease при acquire/renew</td></tr>
+          <tr><td><code>RABBITMQ_URL</code></td><td data-i18n="env.yes">да</td><td>—</td><td data-i18n="env.scheduler.rabbit">AMQP URL для outbox relay</td></tr>
+          <tr><td><code>OUTBOX_RELAY_INTERVAL</code></td><td data-i18n="env.no">нет</td><td><code>500ms</code></td><td data-i18n="env.scheduler.outboxInterval">Интервал публикации outbox в RabbitMQ</td></tr>
+          <tr><td><code>OUTBOX_RELAY_BATCH</code></td><td data-i18n="env.no">нет</td><td><code>50</code></td><td data-i18n="env.scheduler.outboxBatch">Размер batch outbox relay</td></tr>
+          <tr><td><code>JOB_LEASE_DURATION</code></td><td data-i18n="env.no">нет</td><td><code>30m</code></td><td data-i18n="env.job.lease">Длительность lease при claim/renew</td></tr>
           <tr><td><code>JOB_DEFAULT_MAX_DURATION</code></td><td data-i18n="env.no">нет</td><td><code>2h</code></td><td data-i18n="env.job.maxDuration">Default max runtime job (если не задан в job/preset)</td></tr>
           <tr><td><code>REAPER_INTERVAL</code></td><td data-i18n="env.no">нет</td><td><code>30s</code></td><td data-i18n="env.reaper.interval">Интервал фонового reaper</td></tr>
           <tr><td><code>REAPER_WORKER_TIMEOUT</code></td><td data-i18n="env.no">нет</td><td><code>50s</code></td><td data-i18n="env.reaper.workerTimeout">Без heartbeat дольше этого — воркер <code>DEAD</code> (рекомендуется ≥3× heartbeat)</td></tr>
@@ -845,7 +847,8 @@ SCHEDULER_URL=http://localhost:8080 ./scripts/submit-jobs.sh</code></pre>
           <tr><td><code>WORKER_MAX_PARALLEL_JOBS</code></td><td data-i18n="env.no">нет</td><td><code>1</code></td><td data-i18n="env.worker.maxJobs">Параллельные job</td></tr>
           <tr><td><code>WORKER_GPU_AVAILABLE</code></td><td data-i18n="env.no">нет</td><td><code>false</code></td><td data-i18n="env.worker.gpu"><code>true</code> или <code>1</code> для GPU</td></tr>
           <tr><td><code>WORKER_HEARTBEAT_INTERVAL</code></td><td data-i18n="env.no">нет</td><td><code>10s</code></td><td data-i18n="env.worker.heartbeat">Интервал heartbeat</td></tr>
-          <tr><td><code>WORKER_POLL_INTERVAL</code></td><td data-i18n="env.no">нет</td><td><code>2s</code></td><td data-i18n="env.worker.poll">Пауза при пустой очереди</td></tr>
+          <tr><td><code>RABBITMQ_URL</code></td><td data-i18n="env.yes">да</td><td>—</td><td data-i18n="env.worker.rabbit">AMQP URL для consume dispatch-сообщений</td></tr>
+          <tr><td><code>WORKER_MAX_PARALLEL_JOBS</code></td><td data-i18n="env.no">нет</td><td><code>1</code></td><td data-i18n="env.worker.parallel">Prefetch / параллельные job на воркере</td></tr>
           <tr><td><code>WORKER_LEASE_RENEW_INTERVAL</code></td><td data-i18n="env.no">нет</td><td><code>lease/3</code> (min 30s)</td><td data-i18n="env.worker.leaseRenew">Интервал renew lease во время job</td></tr>
           <tr><td><code>WORKER_JOB_LEASE_DURATION</code></td><td data-i18n="env.no">нет</td><td><code>JOB_LEASE_DURATION</code> / <code>30m</code></td><td data-i18n="env.worker.jobLease">Lease TTL для renew (должен совпадать с scheduler)</td></tr>
           <tr><td><code>WORKER_DEFAULT_MAX_DURATION</code></td><td data-i18n="env.no">нет</td><td><code>JOB_DEFAULT_MAX_DURATION</code> / <code>2h</code></td><td data-i18n="env.worker.maxDuration">Fallback таймаут ffmpeg</td></tr>
@@ -950,7 +953,8 @@ curl -s -X POST http://localhost:8080/jobs \
         <tbody>
           <tr><td><code>postgres</code></td><td><code>postgres:16-alpine</code></td><td data-i18n="docker.img.postgres">healthcheck, persistent volume</td></tr>
           <tr><td><code>migrate</code></td><td data-i18n="docker.img.migrateBuild">сборка <code>target: migrate</code></td><td data-i18n="docker.img.migrate">one-shot <code>migrate up</code>, embedded SQL, pg_dump для backup</td></tr>
-          <tr><td><code>scheduler</code></td><td data-i18n="docker.img.schedulerBuild">сборка <code>target: scheduler</code></td><td data-i18n="docker.img.scheduler">multi-stage Go, non-root, readiness <code>/ready</code></td></tr>
+          <tr><td><code>rabbitmq</code></td><td><code>rabbitmq:3-management-alpine</code></td><td data-i18n="docker.img.rabbit">healthcheck, dispatch queues</td></tr>
+          <tr><td><code>scheduler</code></td><td data-i18n="docker.img.schedulerBuild">сборка <code>target: scheduler</code></td><td data-i18n="docker.img.scheduler">multi-stage Go, non-root, liveness <code>/health</code></td></tr>
           <tr><td><code>worker</code></td><td data-i18n="docker.img.workerBuild">сборка <code>target: worker</code></td><td data-i18n="docker.img.worker">ffmpeg, том <code>/data</code>, drop privileges</td></tr>
         </tbody>
       </table>
@@ -1062,7 +1066,7 @@ make ci</code></pre>
           <tr>
             <td>Integration</td>
             <td><code>internal/api</code></td>
-            <td data-i18n="testing.apiSmoke">Smoke: create → register → request-job → result → get/logs</td>
+            <td data-i18n="testing.apiSmoke">Smoke: create → register → claim-job → result → get/logs</td>
           </tr>
         </tbody>
       </table>
@@ -1114,7 +1118,7 @@ make ci</code></pre>
         'hero.title': 'Distributed Video Compression Platform',
         'hero.desc': 'Отказоустойчивая платформа для запуска <code>ffmpeg</code> на нескольких узлах. Планировщик (Scheduler) принимает задания через HTTP API, воркеры забирают их из очереди PostgreSQL и выполняют транскодирование.',
         'overview.title': 'Обзор',
-        'overview.p1': 'Проект реализует минимально жизнеспособную распределённую систему обработки видео. Очередь заданий хранится в PostgreSQL и выдаётся через <code>SELECT … FOR UPDATE SKIP LOCKED</code> — без внешнего брокера сообщений.',
+        'overview.p1': 'Проект реализует минимально жизнеспособную распределённую систему обработки видео. Dispatch через RabbitMQ (transactional outbox); PostgreSQL хранит состояние job, workers и logs.',
         'overview.card.scheduler': 'HTTP API: создание job, регистрация воркеров, выдача задач, финализация результатов.',
         'overview.card.worker': 'Регистрация, heartbeat, polling заданий, запуск ffmpeg, отправка логов.',
         'overview.card.postgres': 'Единственный источник истины: jobs, workers, job_logs, lease TTL.',
@@ -1122,9 +1126,10 @@ make ci</code></pre>
         'architecture.principles': 'Ключевые принципы',
         'architecture.atLeastOnce': '<strong>Effectively-once</strong> — lease renewal, skip готового output и <code>lease_generation</code> снижают дубли transcode; reaper остаётся safety net.',
         'architecture.lease': '<strong>Lease</strong> — при выдаче job устанавливается <code>lease_expires_at</code> (по умолчанию 30 мин, <code>JOB_LEASE_DURATION</code>). Воркер продлевает lease через <code>POST /workers/renew-lease</code> во время ffmpeg.',
-        'architecture.reaper': '<strong>Reaper</strong> — помечает воркеров без heartbeat как <code>DEAD</code> (timeout по умолчанию 50s) и возвращает <code>RUNNING</code> job с истёкшим lease или на <code>DEAD</code> воркере в <code>RETRY</code>/<code>FAILED</code>.',
+        'architecture.reaper': '<strong>Reaper</strong> — помечает воркеров без heartbeat как <code>DEAD</code> (timeout по умолчанию 50s) и возвращает <code>RUNNING</code> job с истёкшим lease или на <code>DEAD</code> воркере в outbox retry (<code>DISPATCHED</code>) или <code>FAILED</code>.',
+        'architecture.outbox': '<strong>Transactional outbox</strong> — dispatch в RabbitMQ атомарно с записью job; relay публикует из <code>job_outbox</code>.',
         'architecture.idempotency': '<strong>Idempotency</strong> — заголовок <code>Idempotency-Key</code> на <code>POST /jobs</code>; воркер пропускает transcode, если output уже валиден.',
-        'architecture.skipLocked': '<strong>SKIP LOCKED</strong> — несколько воркеров могут безопасно конкурировать за задания без блокировок.',
+        'architecture.skipLocked': '<strong>Transactional outbox</strong> — dispatch в RabbitMQ атомарно с записью job; relay публикует из <code>job_outbox</code>.',
         'components.title': 'Компоненты',
         'components.scheduler': 'Точка входа HTTP-сервера. Подключается к PostgreSQL через <code>DB_DSN</code>, слушает <code>SCHEDULER_ADDR</code> (по умолчанию <code>:8080</code>), запускает фоновый reaper.',
         'components.worker': 'Точка входа воркера. Регистрируется в scheduler, шлёт heartbeat, параллельно обрабатывает до <code>max_parallel_jobs</code> заданий.',
@@ -1144,7 +1149,7 @@ make ci</code></pre>
         'jobLifecycle.completed': 'Успешно завершено (финальный статус)',
         'jobLifecycle.failed': 'Исчерпаны попытки (<code>attempt ≥ max_attempts</code>)',
         'jobLifecycle.retry': 'Ошибка выполнения, будет повторно поставлено в очередь',
-        'jobLifecycle.note': 'Локальный job через <code>POST /jobs</code> сразу получает статус <code>QUEUED</code>. R2 job через <code>POST /jobs/init</code> начинается со статуса <code>NEW</code> и переходит в <code>QUEUED</code> после <code>POST /jobs/{id}/submit</code>. При выдаче воркеру <code>attempt</code> увеличивается на 1. Reaper переводит <code>RUNNING</code> в <code>RETRY</code> или <code>FAILED</code> при истечении lease или падении воркера (без увеличения <code>attempt</code>).',
+        'jobLifecycle.note': 'Локальный job через <code>POST /jobs</code> сразу получает статус <code>DISPATCHED</code> (outbox → RabbitMQ). R2 job через <code>POST /jobs/init</code> начинается со статуса <code>NEW</code> и переходит в <code>DISPATCHED</code> после <code>POST /jobs/{id}/submit</code>. При claim воркером <code>attempt</code> увеличивается на 1. Reaper переводит <code>RUNNING</code> в outbox retry (<code>DISPATCHED</code>) или <code>FAILED</code> при истечении lease или падении воркера (без увеличения <code>attempt</code>).',
         'database.title': 'База данных',
         'database.migration': 'Версионированные SQL-миграции в <code>db/migrations/</code> (<code>000001_init</code> … <code>000004_job_exec_safety</code>). Применение: <code>make migrate-up</code> или сервис <code>migrate</code> в Docker Compose.',
         'database.migrator': 'CLI <code>cmd/migrate</code>: <code>up</code>, <code>down [N]</code>, <code>status</code>, <code>backup</code>. Версии хранятся в таблице <code>schema_migrations</code> (golang-migrate).',
@@ -1192,8 +1197,8 @@ make ci</code></pre>
         'api.health': 'Health',
         'api.health.intro': 'Два probe для orchestrator и load balancer: liveness и readiness.',
         'api.health.livenessDesc': 'Liveness — HTTP-процесс жив (без проверки зависимостей)',
-        'api.health.readinessDesc': 'Readiness — ping PostgreSQL; HeadBucket R2, если R2 настроен',
-        'api.health.lbNote': 'Load balancer и Docker healthcheck используют <code>/ready</code>. В Kubernetes: liveness → <code>/health</code>, readiness → <code>/ready</code>.',
+        'api.health.readinessDesc': 'Readiness — ping PostgreSQL и RabbitMQ; HeadBucket R2 (ошибка R2 → degraded, но 200)',
+        'api.health.lbNote': 'Docker healthcheck scheduler использует <code>/health</code> (liveness). Load balancer readiness → <code>/ready</code>. В Kubernetes: liveness → <code>/health</code>, readiness → <code>/ready</code>.',
         'api.presets.title': 'Presets',
         'api.presets.intro': 'Именованные профили транскодирования. При создании job укажите <code>preset</code> — scheduler резолвит его в <code>ffmpeg_args</code> и сохраняет snapshot в БД. Поле <code>ffmpeg_args</code> в запросе по-прежнему поддерживается (deprecated): укажите <strong>либо</strong> <code>preset</code>, <strong>либо</strong> <code>ffmpeg_args</code>.',
         'api.presets.list': 'Каталог доступных presets',
@@ -1205,7 +1210,7 @@ make ci</code></pre>
         'api.jobs.get': 'Получить job по ID',
         'api.jobs.logs': 'Логи stdout/stderr job (по попыткам, в порядке времени)',
         'api.jobs.postBody': '<strong>POST /jobs</strong> — тело запроса (JSON, локальный режим):',
-        'api.jobs.postNote': 'JSON: обязательные <code>input_path</code>, <code>output_path</code> и <code>preset</code> или <code>ffmpeg_args</code> (<code>storage: "local"</code>). Multipart (R2): поля <code>file</code>, <code>output_ext</code> и <code>preset</code> или <code>ffmpeg_args</code> — scheduler загружает файл в bucket и сразу ставит job в <code>QUEUED</code>.',
+        'api.jobs.postNote': 'JSON: обязательные <code>input_path</code>, <code>output_path</code> и <code>preset</code> или <code>ffmpeg_args</code> (<code>storage: "local"</code>). Multipart (R2): поля <code>file</code>, <code>output_ext</code> и <code>preset</code> или <code>ffmpeg_args</code> — scheduler загружает файл в bucket и сразу ставит job в <code>DISPATCHED</code>.',
         'api.upload.title': 'POST /jobs — multipart upload (R2)',
         'api.upload.intro': 'Один запрос «отправил файл и забыл». Требует настроенный R2 на scheduler. Content-Type: <code>multipart/form-data</code>.',
         'api.upload.col.field': 'Поле',
@@ -1228,7 +1233,7 @@ make ci</code></pre>
         'api.workers.request': 'Запрос следующего job (SKIP LOCKED + lease)',
         'api.workers.renew': 'Продление lease во время RUNNING',
         'api.workers.result': 'Финализация job и запись логов',
-        'api.workers.requestBody': '<strong>POST /workers/request-job</strong>:',
+        'api.workers.requestBody': '<strong>POST /workers/claim-job</strong>:',
         'api.workers.renewBody': '<strong>POST /workers/renew-lease</strong>:',
         'api.workers.resultBody': '<strong>POST /workers/job-result</strong>:',
         'api.admin.title': 'Admin API',
@@ -1339,7 +1344,8 @@ make ci</code></pre>
         'docker.img.migrateBuild': 'сборка <code>target: migrate</code>',
         'docker.img.migrate': 'one-shot <code>migrate up</code>, embedded SQL, pg_dump для backup',
         'docker.img.schedulerBuild': 'сборка <code>target: scheduler</code>',
-        'docker.img.scheduler': 'multi-stage Go, non-root, readiness <code>/ready</code>',
+        'docker.img.scheduler': 'multi-stage Go, non-root, liveness <code>/health</code>',
+        'docker.img.rabbit': 'healthcheck, dispatch queues',
         'docker.img.workerBuild': 'сборка <code>target: worker</code>',
         'docker.img.worker': 'ffmpeg, том <code>/data</code>, drop privileges',
         'docker.cleanup': 'Остановка и очистка',
@@ -1358,7 +1364,7 @@ make ci</code></pre>
         'testing.worker': 'HTTP-клиент scheduler (<code>httptest.Server</code>)',
         'testing.store': 'Очередь, SKIP LOCKED, lease, retry/failed, reaper, логи',
         'testing.reaper': 'Тик reaper, отмена по context (mock Store)',
-        'testing.apiSmoke': 'Smoke: create → register → request-job → result → get/logs',
+        'testing.apiSmoke': 'Smoke: create → register → claim-job → result → get/logs',
         'testing.gha': 'Workflow <code>.github/workflows/ci.yml</code> запускается на pull request и push в <code>main</code>/<code>master</code>:',
         'testing.gha.lint': '<strong>lint</strong> — <code>go vet</code>, <code>go mod verify</code>',
         'testing.gha.unit': '<strong>unit-tests</strong> — <code>go test -short ./...</code>',
@@ -1390,7 +1396,7 @@ make ci</code></pre>
         'hero.title': 'Distributed Video Compression Platform',
         'hero.desc': 'Fault-tolerant platform for running <code>ffmpeg</code> across multiple nodes. The scheduler accepts jobs via HTTP API; workers pull from a PostgreSQL queue and transcode video.',
         'overview.title': 'Overview',
-        'overview.p1': 'The project implements a minimum viable distributed video processing system. The job queue lives in PostgreSQL and is dispatched via <code>SELECT … FOR UPDATE SKIP LOCKED</code> — no external message broker.',
+        'overview.p1': 'The project implements a minimum viable distributed video processing system. Dispatch uses RabbitMQ (transactional outbox); PostgreSQL stores job state, workers, and logs.',
         'overview.card.scheduler': 'HTTP API: create jobs, register workers, dispatch tasks, finalize results.',
         'overview.card.worker': 'Registration, heartbeat, job polling, ffmpeg execution, log upload.',
         'overview.card.postgres': 'Single source of truth: jobs, workers, job_logs, lease TTL.',
@@ -1398,9 +1404,10 @@ make ci</code></pre>
         'architecture.principles': 'Key principles',
         'architecture.atLeastOnce': '<strong>Effectively-once</strong> — lease renewal, skipping valid output, and <code>lease_generation</code> reduce duplicate transcodes; reaper remains a safety net.',
         'architecture.lease': '<strong>Lease</strong> — <code>lease_expires_at</code> is set on dispatch (default 30 min, <code>JOB_LEASE_DURATION</code>). Worker renews via <code>POST /workers/renew-lease</code> while ffmpeg runs.',
-        'architecture.reaper': '<strong>Reaper</strong> — marks workers without heartbeat as <code>DEAD</code> (default timeout 50s) and moves <code>RUNNING</code> jobs with expired lease or on <code>DEAD</code> workers to <code>RETRY</code>/<code>FAILED</code>.',
+        'architecture.reaper': '<strong>Reaper</strong> — marks workers without heartbeat as <code>DEAD</code> (default timeout 50s) and moves <code>RUNNING</code> jobs with expired lease or on <code>DEAD</code> workers to outbox retry (<code>DISPATCHED</code>) or <code>FAILED</code>.',
         'architecture.idempotency': '<strong>Idempotency</strong> — <code>Idempotency-Key</code> header on <code>POST /jobs</code>; worker skips transcode when output is already valid.',
-        'architecture.skipLocked': '<strong>SKIP LOCKED</strong> — multiple workers can safely compete for jobs without blocking.',
+        'architecture.outbox': '<strong>Transactional outbox</strong> — RabbitMQ dispatch is atomic with job write; relay publishes from <code>job_outbox</code>.',
+        'architecture.skipLocked': '<strong>Transactional outbox</strong> — RabbitMQ dispatch is atomic with job write; relay publishes from <code>job_outbox</code>.',
         'components.title': 'Components',
         'components.scheduler': 'HTTP server entry point. Connects to PostgreSQL via <code>DB_DSN</code>, listens on <code>SCHEDULER_ADDR</code> (default <code>:8080</code>), runs background reaper.',
         'components.worker': 'Worker entry point. Registers with the scheduler, sends heartbeats, processes up to <code>max_parallel_jobs</code> jobs in parallel.',
@@ -1420,7 +1427,7 @@ make ci</code></pre>
         'jobLifecycle.completed': 'Completed successfully (final status)',
         'jobLifecycle.failed': 'Attempts exhausted (<code>attempt ≥ max_attempts</code>)',
         'jobLifecycle.retry': 'Execution error, will be re-queued',
-        'jobLifecycle.note': 'Local jobs via <code>POST /jobs</code> start as <code>QUEUED</code>. R2 jobs via <code>POST /jobs/init</code> start as <code>NEW</code> and move to <code>QUEUED</code> after <code>POST /jobs/{id}/submit</code>. On dispatch, <code>attempt</code> increments by 1. Reaper moves <code>RUNNING</code> to <code>RETRY</code> or <code>FAILED</code> on lease expiry or worker failure (without incrementing <code>attempt</code>).',
+        'jobLifecycle.note': 'Local jobs via <code>POST /jobs</code> start as <code>DISPATCHED</code> (outbox → RabbitMQ). R2 jobs via <code>POST /jobs/init</code> start as <code>NEW</code> and move to <code>DISPATCHED</code> after <code>POST /jobs/{id}/submit</code>. On claim, <code>attempt</code> increments by 1. Reaper moves <code>RUNNING</code> to outbox retry (<code>DISPATCHED</code>) or <code>FAILED</code> on lease expiry or worker failure (without incrementing <code>attempt</code>).',
         'database.title': 'Database',
         'database.migration': 'Versioned SQL migrations in <code>db/migrations/</code> (<code>000001_init</code> … <code>000004_job_exec_safety</code>). Apply with <code>make migrate-up</code> or the Docker Compose <code>migrate</code> service.',
         'database.migrator': 'CLI <code>cmd/migrate</code>: <code>up</code>, <code>down [N]</code>, <code>status</code>, <code>backup</code>. Versions are tracked in <code>schema_migrations</code> (golang-migrate).',
@@ -1468,8 +1475,8 @@ make ci</code></pre>
         'api.health': 'Health',
         'api.health.intro': 'Two probes for orchestrator and load balancer: liveness and readiness.',
         'api.health.livenessDesc': 'Liveness — HTTP process is up (no dependency checks)',
-        'api.health.readinessDesc': 'Readiness — PostgreSQL ping; R2 HeadBucket when R2 is configured',
-        'api.health.lbNote': 'Load balancer and Docker healthcheck use <code>/ready</code>. In Kubernetes: liveness → <code>/health</code>, readiness → <code>/ready</code>.',
+        'api.health.readinessDesc': 'Readiness — PostgreSQL and RabbitMQ ping; R2 HeadBucket (R2 fail → degraded, still 200)',
+        'api.health.lbNote': 'Docker scheduler healthcheck uses <code>/health</code> (liveness). Load balancer readiness → <code>/ready</code>. In Kubernetes: liveness → <code>/health</code>, readiness → <code>/ready</code>.',
         'api.presets.title': 'Presets',
         'api.presets.intro': 'Named transcode profiles. When creating a job, set <code>preset</code> — the scheduler resolves it to <code>ffmpeg_args</code> and stores a snapshot in the DB. Request field <code>ffmpeg_args</code> is still supported (deprecated): specify <strong>either</strong> <code>preset</code> <strong>or</strong> <code>ffmpeg_args</code>.',
         'api.presets.list': 'Catalog of available presets',
@@ -1504,7 +1511,7 @@ make ci</code></pre>
         'api.workers.request': 'Request next job (SKIP LOCKED + lease)',
         'api.workers.renew': 'Extend lease while RUNNING',
         'api.workers.result': 'Finalize job and store logs',
-        'api.workers.requestBody': '<strong>POST /workers/request-job</strong>:',
+        'api.workers.requestBody': '<strong>POST /workers/claim-job</strong>:',
         'api.workers.renewBody': '<strong>POST /workers/renew-lease</strong>:',
         'api.workers.resultBody': '<strong>POST /workers/job-result</strong>:',
         'api.admin.title': 'Admin API',
@@ -1615,7 +1622,8 @@ make ci</code></pre>
         'docker.img.migrateBuild': 'build <code>target: migrate</code>',
         'docker.img.migrate': 'one-shot <code>migrate up</code>, embedded SQL, pg_dump for backup',
         'docker.img.schedulerBuild': 'build <code>target: scheduler</code>',
-        'docker.img.scheduler': 'multi-stage Go, non-root, readiness <code>/ready</code>',
+        'docker.img.scheduler': 'multi-stage Go, non-root, liveness <code>/health</code>',
+        'docker.img.rabbit': 'healthcheck, dispatch queues',
         'docker.img.workerBuild': 'build <code>target: worker</code>',
         'docker.img.worker': 'ffmpeg, <code>/data</code> volume, drop privileges',
         'docker.cleanup': 'Stop and cleanup',
@@ -1634,7 +1642,7 @@ make ci</code></pre>
         'testing.worker': 'Scheduler HTTP client (<code>httptest.Server</code>)',
         'testing.store': 'Queue, SKIP LOCKED, lease, retry/failed, reaper, logs',
         'testing.reaper': 'Reaper tick, context cancellation (mock Store)',
-        'testing.apiSmoke': 'Smoke: create → register → request-job → result → get/logs',
+        'testing.apiSmoke': 'Smoke: create → register → claim-job → result → get/logs',
         'testing.gha': 'Workflow <code>.github/workflows/ci.yml</code> runs on pull request and push to <code>main</code>/<code>master</code>:',
         'testing.gha.lint': '<strong>lint</strong> — <code>go vet</code>, <code>go mod verify</code>',
         'testing.gha.unit': '<strong>unit-tests</strong> — <code>go test -short ./...</code>',
@@ -1666,7 +1674,7 @@ make ci</code></pre>
         'hero.title': 'Distributed Video Compression Platform',
         'hero.desc': 'Відмовостійка платформа для запуску <code>ffmpeg</code> на кількох вузлах. Планувальник (Scheduler) приймає завдання через HTTP API, воркери забирають їх з черги PostgreSQL і виконують транскодування.',
         'overview.title': 'Огляд',
-        'overview.p1': 'Проєкт реалізує мінімально життєздатну розподілену систему обробки відео. Черга завдань зберігається в PostgreSQL і видається через <code>SELECT … FOR UPDATE SKIP LOCKED</code> — без зовнішнього брокера повідомлень.',
+        'overview.p1': 'Проєкт реалізує мінімально життєздатну розподілену систему обробки відео. Dispatch через RabbitMQ (transactional outbox); PostgreSQL зберігає стан job, workers і logs.',
         'overview.card.scheduler': 'HTTP API: створення job, реєстрація воркерів, видача завдань, фіналізація результатів.',
         'overview.card.worker': 'Реєстрація, heartbeat, polling завдань, запуск ffmpeg, надсилання логів.',
         'overview.card.postgres': 'Єдине джерело істини: jobs, workers, job_logs, lease TTL.',
@@ -1674,9 +1682,10 @@ make ci</code></pre>
         'architecture.principles': 'Ключові принципи',
         'architecture.atLeastOnce': '<strong>Effectively-once</strong> — lease renewal, skip готового output і lease_generation знижують дублі transcode; reaper залишається safety net.',
         'architecture.lease': '<strong>Lease</strong> — при видачі job встановлюється lease_expires_at (за замовчуванням 30 хв, JOB_LEASE_DURATION). Воркер продовжує lease через POST /workers/renew-lease під час ffmpeg.',
-        'architecture.reaper': '<strong>Reaper</strong> — позначає воркерів без heartbeat як DEAD (timeout за замовчуванням 50s) і повертає RUNNING job з простроченим lease або на DEAD воркері в RETRY/FAILED.',
+        'architecture.reaper': '<strong>Reaper</strong> — позначає воркерів без heartbeat як DEAD (timeout за замовчуванням 50s) і повертає RUNNING job з простроченим lease або на DEAD воркері в outbox retry (DISPATCHED) або FAILED.',
         'architecture.idempotency': '<strong>Idempotency</strong> — заголовок Idempotency-Key на POST /jobs; воркер пропускає transcode, якщо output уже валідний.',
-        'architecture.skipLocked': '<strong>SKIP LOCKED</strong> — кілька воркерів можуть безпечно конкурувати за завдання без блокувань.',
+        'architecture.outbox': '<strong>Transactional outbox</strong> — dispatch у RabbitMQ атомарно з записом job; relay публікує з <code>job_outbox</code>.',
+        'architecture.skipLocked': '<strong>Transactional outbox</strong> — dispatch у RabbitMQ атомарно з записом job; relay публікує з <code>job_outbox</code>.',
         'components.title': 'Компоненти',
         'components.scheduler': 'Точка входу HTTP-сервера. Підключається до PostgreSQL через <code>DB_DSN</code>, слухає <code>SCHEDULER_ADDR</code> (за замовчуванням <code>:8080</code>), запускає фоновий reaper.',
         'components.worker': 'Точка входу воркера. Реєструється в scheduler, надсилає heartbeat, паралельно обробляє до <code>max_parallel_jobs</code> завдань.',
@@ -1696,7 +1705,7 @@ make ci</code></pre>
         'jobLifecycle.completed': 'Успішно завершено (фінальний статус)',
         'jobLifecycle.failed': 'Вичерпано спроби (<code>attempt ≥ max_attempts</code>)',
         'jobLifecycle.retry': 'Помилка виконання, буде повторно поставлено в чергу',
-        'jobLifecycle.note': 'Локальний job через <code>POST /jobs</code> одразу отримує статус <code>QUEUED</code>. R2 job через <code>POST /jobs/init</code> починається зі статусу <code>NEW</code> і переходить у <code>QUEUED</code> після <code>POST /jobs/{id}/submit</code>. При видачі воркеру <code>attempt</code> збільшується на 1. Reaper переводить <code>RUNNING</code> у <code>RETRY</code> або <code>FAILED</code> при закінченні lease або падінні воркера (без збільшення <code>attempt</code>).',
+        'jobLifecycle.note': 'Локальний job через <code>POST /jobs</code> одразу отримує статус <code>DISPATCHED</code> (outbox → RabbitMQ). R2 job через <code>POST /jobs/init</code> починається зі статусу <code>NEW</code> і переходить у <code>DISPATCHED</code> після <code>POST /jobs/{id}/submit</code>. При claim воркером <code>attempt</code> збільшується на 1. Reaper переводить <code>RUNNING</code> у outbox retry (<code>DISPATCHED</code>) або <code>FAILED</code> при закінченні lease або падінні воркера (без збільшення <code>attempt</code>).',
         'database.title': 'База даних',
         'database.migration': 'Версіоновані SQL-міграції в db/migrations/ (000001_init … 000004_job_exec_safety). Застосування: make migrate-up або сервіс migrate у Docker Compose.',
         'database.migrator': 'CLI <code>cmd/migrate</code>: <code>up</code>, <code>down [N]</code>, <code>status</code>, <code>backup</code>. Версії зберігаються в таблиці <code>schema_migrations</code> (golang-migrate).',
@@ -1741,8 +1750,8 @@ make ci</code></pre>
         'api.health': 'Health',
         'api.health.intro': 'Два probe для orchestrator і load balancer: liveness і readiness.',
         'api.health.livenessDesc': 'Liveness — HTTP-процес живий (без перевірки залежностей)',
-        'api.health.readinessDesc': 'Readiness — ping PostgreSQL; HeadBucket R2, якщо R2 налаштовано',
-        'api.health.lbNote': 'Load balancer і Docker healthcheck використовують <code>/ready</code>. У Kubernetes: liveness → <code>/health</code>, readiness → <code>/ready</code>.',
+        'api.health.readinessDesc': 'Readiness — ping PostgreSQL і RabbitMQ; HeadBucket R2 (помилка R2 → degraded, але 200)',
+        'api.health.lbNote': 'Docker healthcheck scheduler використовує <code>/health</code> (liveness). Load balancer readiness → <code>/ready</code>. У Kubernetes: liveness → <code>/health</code>, readiness → <code>/ready</code>.',
         'api.presets.title': 'Presets',
         'api.presets.intro': 'Іменовані профілі транскодування. При створенні job вкажіть <code>preset</code> — scheduler резолвить його в <code>ffmpeg_args</code> і зберігає snapshot у БД. Поле <code>ffmpeg_args</code> у запиті підтримується (deprecated): вкажіть <strong>або</strong> <code>preset</code>, <strong>або</strong> <code>ffmpeg_args</code>.',
         'api.presets.list': 'Каталог доступних presets',
@@ -1754,7 +1763,7 @@ make ci</code></pre>
         'api.jobs.get': 'Отримати job за ID',
         'api.jobs.logs': 'Логи stdout/stderr job (за спробами, у хронологічному порядку)',
         'api.jobs.postBody': '<strong>POST /jobs</strong> — тіло запиту (JSON, локальний режим):',
-        'api.jobs.postNote': 'JSON: обов\'язкові <code>input_path</code>, <code>output_path</code> та <code>preset</code> або <code>ffmpeg_args</code> (<code>storage: "local"</code>). Multipart (R2): поля <code>file</code>, <code>output_ext</code> та <code>preset</code> або <code>ffmpeg_args</code> — scheduler завантажує файл у bucket і одразу ставить job у <code>QUEUED</code>.',
+        'api.jobs.postNote': 'JSON: обов\'язкові <code>input_path</code>, <code>output_path</code> та <code>preset</code> або <code>ffmpeg_args</code> (<code>storage: "local"</code>). Multipart (R2): поля <code>file</code>, <code>output_ext</code> та <code>preset</code> або <code>ffmpeg_args</code> — scheduler завантажує файл у bucket і одразу ставить job у <code>DISPATCHED</code>.',
         'api.upload.title': 'POST /jobs — multipart upload (R2)',
         'api.upload.intro': 'Один запит «надіслав файл і забув». Потрібен R2 на scheduler. Content-Type: <code>multipart/form-data</code>.',
         'api.upload.col.field': 'Поле',
@@ -1776,7 +1785,7 @@ make ci</code></pre>
         'api.workers.heartbeat': 'Heartbeat воркера',
         'api.workers.request': 'Запит наступного job (SKIP LOCKED + lease)',
         'api.workers.result': 'Фіналізація job і запис логів',
-        'api.workers.requestBody': '<strong>POST /workers/request-job</strong>:',
+        'api.workers.requestBody': '<strong>POST /workers/claim-job</strong>:',
         'api.workers.resultBody': '<strong>POST /workers/job-result</strong>:',
         'api.admin.title': 'Admin API',
         'api.admin.intro': 'Read-only endpoints для admin dashboard. Потрібен <code>SCHEDULER_ADMIN_API_KEY</code>. UI: <a href="/admin/" style="color: var(--accent);"><code>/admin/</code></a>.',
@@ -1881,7 +1890,8 @@ make ci</code></pre>
         'docker.img.migrateBuild': 'збірка <code>target: migrate</code>',
         'docker.img.migrate': 'one-shot <code>migrate up</code>, embedded SQL, pg_dump для backup',
         'docker.img.schedulerBuild': 'збірка <code>target: scheduler</code>',
-        'docker.img.scheduler': 'multi-stage Go, non-root, readiness <code>/ready</code>',
+        'docker.img.scheduler': 'multi-stage Go, non-root, liveness <code>/health</code>',
+        'docker.img.rabbit': 'healthcheck, dispatch queues',
         'docker.img.workerBuild': 'збірка <code>target: worker</code>',
         'docker.img.worker': 'ffmpeg, том <code>/data</code>, drop privileges',
         'docker.cleanup': 'Зупинка та очищення',
@@ -1900,7 +1910,7 @@ make ci</code></pre>
         'testing.worker': 'HTTP-клієнт scheduler (<code>httptest.Server</code>)',
         'testing.store': 'Черга, SKIP LOCKED, lease, retry/failed, reaper, логи',
         'testing.reaper': 'Тік reaper, скасування по context (mock Store)',
-        'testing.apiSmoke': 'Smoke: create → register → request-job → result → get/logs',
+        'testing.apiSmoke': 'Smoke: create → register → claim-job → result → get/logs',
         'testing.gha': 'Workflow <code>.github/workflows/ci.yml</code> запускається на pull request і push у <code>main</code>/<code>master</code>:',
         'testing.gha.lint': '<strong>lint</strong> — <code>go vet</code>, <code>go mod verify</code>',
         'testing.gha.unit': '<strong>unit-tests</strong> — <code>go test -short ./...</code>',

@@ -26,7 +26,8 @@ type mockStore struct {
 	getJobLogsFn           func(ctx context.Context, jobID string) ([]types.JobLog, error)
 	registerWorkerFn       func(ctx context.Context, w *types.Worker) error
 	heartbeatFn            func(ctx context.Context, workerID string, ts time.Time) error
-	acquireJobFn           func(ctx context.Context, workerID string, lease time.Duration) (*types.Job, error)
+	createAndDispatchFn    func(ctx context.Context, p *store.JobCreateParams) error
+	claimJobFn             func(ctx context.Context, jobID, workerID string, lease time.Duration) (*types.Job, error)
 	renewLeaseFn           func(ctx context.Context, jobID, workerID string, leaseGeneration int64, lease time.Duration) (*types.Job, error)
 	finishJobFn            func(ctx context.Context, jobID, workerID string, leaseGeneration int64, success bool, logs []types.JobLogEntry) error
 	listJobsFn             func(ctx context.Context, filter store.ListJobsFilter) (store.ListJobsResult, error)
@@ -84,11 +85,18 @@ func (m *mockStore) Heartbeat(ctx context.Context, workerID string, ts time.Time
 	return nil
 }
 
-func (m *mockStore) AcquireJob(ctx context.Context, workerID string, lease time.Duration) (*types.Job, error) {
-	if m.acquireJobFn != nil {
-		return m.acquireJobFn(ctx, workerID, lease)
+func (m *mockStore) CreateAndDispatch(ctx context.Context, p *store.JobCreateParams) error {
+	if m.createAndDispatchFn != nil {
+		return m.createAndDispatchFn(ctx, p)
 	}
-	return nil, nil
+	return nil
+}
+
+func (m *mockStore) ClaimJob(ctx context.Context, jobID, workerID string, lease time.Duration) (*types.Job, error) {
+	if m.claimJobFn != nil {
+		return m.claimJobFn(ctx, jobID, workerID, lease)
+	}
+	return nil, store.ErrJobNotClaimable
 }
 
 func (m *mockStore) GetJobByIdempotencyKey(ctx context.Context, key string) (*types.Job, error) {
@@ -278,13 +286,16 @@ func TestReadyR2Fail(t *testing.T) {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusServiceUnavailable {
-		t.Fatalf("status = %d, want 503", resp.StatusCode)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (R2 optional for readiness)", resp.StatusCode)
 	}
 
 	var body readinessResponse
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
 		t.Fatal(err)
+	}
+	if body.Status != "degraded" {
+		t.Fatalf("status = %q, want degraded", body.Status)
 	}
 	if body.Checks["r2"].Status != "fail" {
 		t.Fatalf("r2 = %#v, want fail", body.Checks["r2"])
@@ -329,13 +340,18 @@ func TestCreateJobValidation(t *testing.T) {
 }
 
 func TestCreateJobWithPreset(t *testing.T) {
-	var captured *types.Job
+	var captured *store.JobCreateParams
 	st := &mockStore{
-		createJobFn: func(_ context.Context, job *types.Job) error {
-			captured = job
-			job.CreatedAt = time.Now().UTC()
-			job.UpdatedAt = job.CreatedAt
+		createAndDispatchFn: func(_ context.Context, p *store.JobCreateParams) error {
+			captured = p
 			return nil
+		},
+		getJobFn: func(_ context.Context, id string) (*types.Job, error) {
+			return &types.Job{
+				ID: id, Preset: "h264_crf23",
+				FFmpegArgs: "-c:v libx264 -crf 23 -preset medium",
+				Status:     types.JobStatusDispatched,
+			}, nil
 		},
 	}
 	srv := newTestServer(st)
@@ -397,13 +413,20 @@ func TestListPresets(t *testing.T) {
 }
 
 func TestCreateJobSuccess(t *testing.T) {
-	var captured *types.Job
+	var captured *store.JobCreateParams
 	st := &mockStore{
-		createJobFn: func(_ context.Context, job *types.Job) error {
-			captured = job
-			job.CreatedAt = time.Now().UTC()
-			job.UpdatedAt = job.CreatedAt
+		createAndDispatchFn: func(_ context.Context, p *store.JobCreateParams) error {
+			captured = p
 			return nil
+		},
+		getJobFn: func(_ context.Context, id string) (*types.Job, error) {
+			return &types.Job{
+				ID:          id,
+				InputPath:   "/data/in.mp4",
+				OutputPath:  "/data/out.mp4",
+				Status:      types.JobStatusDispatched,
+				MaxAttempts: 5,
+			}, nil
 		},
 	}
 	srv := newTestServer(st)
@@ -426,14 +449,14 @@ func TestCreateJobSuccess(t *testing.T) {
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		t.Fatal(err)
 	}
-	if out.Status != types.JobStatusQueued {
-		t.Fatalf("status = %q, want QUEUED", out.Status)
+	if out.Status != types.JobStatusDispatched {
+		t.Fatalf("status = %q, want DISPATCHED", out.Status)
 	}
 	if out.MaxAttempts != 5 {
 		t.Fatalf("max_attempts = %d, want 5", out.MaxAttempts)
 	}
 	if captured == nil || captured.ID != out.ID {
-		t.Fatal("store.CreateJob was not called with response id")
+		t.Fatal("store.CreateAndDispatch was not called with response id")
 	}
 }
 
@@ -484,11 +507,11 @@ func TestWorkerHeartbeatNotFound(t *testing.T) {
 	}
 }
 
-func TestWorkerRequestJobValidation(t *testing.T) {
+func TestWorkerClaimJobValidation(t *testing.T) {
 	srv := newTestServer(&mockStore{})
 	defer srv.Close()
 
-	resp := jsonPost(t, srv.URL+"/workers/request-job", map[string]string{})
+	resp := jsonPost(t, srv.URL+"/workers/claim-job", map[string]string{})
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400", resp.StatusCode)

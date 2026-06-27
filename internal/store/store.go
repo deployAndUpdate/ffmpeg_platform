@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"go_distributed_system/internal/queue"
 	"go_distributed_system/internal/types"
 
 	_ "github.com/lib/pq"
@@ -77,13 +78,23 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW())`
 	return err
 }
 
-// QueueJob moves a NEW job to QUEUED after input upload is confirmed.
+// QueueJob moves a NEW job to DISPATCHED and enqueues an outbox row after input upload is confirmed.
 func (s *Store) QueueJob(ctx context.Context, jobID string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
 	const q = `
 UPDATE jobs
-SET status = 'QUEUED', updated_at = NOW()
+SET status = 'DISPATCHED', updated_at = NOW()
 WHERE id = $1 AND status = 'NEW'`
-	res, err := s.db.ExecContext(ctx, q, jobID)
+	res, err := tx.ExecContext(ctx, q, jobID)
 	if err != nil {
 		return err
 	}
@@ -94,7 +105,15 @@ WHERE id = $1 AND status = 'NEW'`
 	if affected == 0 {
 		return sql.ErrNoRows
 	}
-	return nil
+
+	var attempt int
+	if err = tx.QueryRowContext(ctx, `SELECT attempt FROM jobs WHERE id = $1`, jobID).Scan(&attempt); err != nil {
+		return err
+	}
+	if err = insertOutboxTx(ctx, tx, jobID, queue.TargetMain, attempt); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // GetJob returns a job by ID.

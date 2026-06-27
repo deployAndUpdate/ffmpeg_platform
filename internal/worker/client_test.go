@@ -61,31 +61,36 @@ func TestClientWithAPIKey(t *testing.T) {
 	}
 }
 
-func TestClientRequestJobEmpty(t *testing.T) {
+func TestClientClaimJob(t *testing.T) {
+	wantJob := &types.Job{ID: "job-1", Status: types.JobStatusRunning, Attempt: 1, LeaseGeneration: 1}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/workers/claim-job" {
+			http.NotFound(w, r)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"job": nil})
+		_ = json.NewEncoder(w).Encode(map[string]any{"job": wantJob})
 	}))
 	defer srv.Close()
 
 	client := NewClient(srv.URL)
-	job, err := client.RequestJob(context.Background(), "worker-1")
+	job, err := client.ClaimJob(context.Background(), "worker-1", "job-1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if job != nil {
-		t.Fatalf("job = %+v, want nil", job)
+	if job.ID != wantJob.ID || job.Status != wantJob.Status {
+		t.Fatalf("job = %+v, want %+v", job, wantJob)
 	}
 }
 
-func TestClientRequestJobServerError(t *testing.T) {
+func TestClientClaimJobConflict(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		http.Error(w, "conflict", http.StatusConflict)
 	}))
 	defer srv.Close()
 
 	client := NewClient(srv.URL)
-	_, err := client.RequestJob(context.Background(), "worker-1")
+	_, err := client.ClaimJob(context.Background(), "worker-1", "job-1")
 	if err == nil {
 		t.Fatal("expected error")
 	}
