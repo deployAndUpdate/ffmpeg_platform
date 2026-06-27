@@ -37,7 +37,7 @@ For Cloudflare R2 object storage, set `R2_*` env vars on scheduler and workers (
 - **Scheduler** (`cmd/scheduler`) — HTTP API, transactional outbox → RabbitMQ relay, background reaper for stale workers and expired leases.
 - **Workers** (`cmd/worker`) — AMQP consumer, claim job via HTTP, renew leases during ffmpeg, submit results.
 - **RabbitMQ** — dispatch transport (`jobs.main`, retry queue, DLQ).
-- **PostgreSQL** — source of truth: `jobs`, `job_outbox`, `workers`, `job_logs`, lease TTL and `lease_generation`.
+- **PostgreSQL** — source of truth: `jobs`, `job_outbox`, `workers`, `job_log_artifacts`, lease TTL and `lease_generation`. Job log bodies are stored in R2.
 - **R2 (optional)** — S3-compatible object storage for upload/download via presigned URLs.
 
 ## Job lifecycle

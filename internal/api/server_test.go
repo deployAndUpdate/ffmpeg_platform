@@ -23,13 +23,13 @@ type mockStore struct {
 	queueJobFn             func(ctx context.Context, jobID string) error
 	getJobFn               func(ctx context.Context, id string) (*types.Job, error)
 	getJobByIdempotencyFn  func(ctx context.Context, key string) (*types.Job, error)
-	getJobLogsFn           func(ctx context.Context, jobID string) ([]types.JobLog, error)
+	listLogArtifactsFn     func(ctx context.Context, jobID string) ([]types.JobLogArtifact, error)
 	registerWorkerFn       func(ctx context.Context, w *types.Worker) error
 	heartbeatFn            func(ctx context.Context, workerID string, ts time.Time) error
 	createAndDispatchFn    func(ctx context.Context, p *store.JobCreateParams) error
 	claimJobFn             func(ctx context.Context, jobID, workerID string, lease time.Duration) (*types.Job, error)
 	renewLeaseFn           func(ctx context.Context, jobID, workerID string, leaseGeneration int64, lease time.Duration) (*types.Job, error)
-	finishJobFn            func(ctx context.Context, jobID, workerID string, leaseGeneration int64, success bool, logs []types.JobLogEntry) error
+	finishJobFn            func(ctx context.Context, jobID, workerID string, leaseGeneration int64, success bool, artifact *types.JobLogArtifactInput) error
 	listJobsFn             func(ctx context.Context, filter store.ListJobsFilter) (store.ListJobsResult, error)
 	listWorkersFn          func(ctx context.Context) ([]types.WorkerStats, error)
 	getWorkerFn            func(ctx context.Context, id string) (*types.WorkerStats, error)
@@ -64,9 +64,9 @@ func (m *mockStore) GetJob(ctx context.Context, id string) (*types.Job, error) {
 	return nil, sql.ErrNoRows
 }
 
-func (m *mockStore) GetJobLogs(ctx context.Context, jobID string) ([]types.JobLog, error) {
-	if m.getJobLogsFn != nil {
-		return m.getJobLogsFn(ctx, jobID)
+func (m *mockStore) ListLogArtifacts(ctx context.Context, jobID string) ([]types.JobLogArtifact, error) {
+	if m.listLogArtifactsFn != nil {
+		return m.listLogArtifactsFn(ctx, jobID)
 	}
 	return nil, nil
 }
@@ -113,9 +113,9 @@ func (m *mockStore) RenewLease(ctx context.Context, jobID, workerID string, leas
 	return nil, store.ErrLeaseLost
 }
 
-func (m *mockStore) FinishJob(ctx context.Context, jobID, workerID string, leaseGeneration int64, success bool, logs []types.JobLogEntry) error {
+func (m *mockStore) FinishJob(ctx context.Context, jobID, workerID string, leaseGeneration int64, success bool, artifact *types.JobLogArtifactInput) error {
 	if m.finishJobFn != nil {
-		return m.finishJobFn(ctx, jobID, workerID, leaseGeneration, success, logs)
+		return m.finishJobFn(ctx, jobID, workerID, leaseGeneration, success, artifact)
 	}
 	return nil
 }
@@ -520,7 +520,7 @@ func TestWorkerClaimJobValidation(t *testing.T) {
 
 func TestWorkerJobResultConflict(t *testing.T) {
 	st := &mockStore{
-		finishJobFn: func(context.Context, string, string, int64, bool, []types.JobLogEntry) error {
+		finishJobFn: func(context.Context, string, string, int64, bool, *types.JobLogArtifactInput) error {
 			return store.ErrJobNotAssigned
 		},
 	}
@@ -541,7 +541,7 @@ func TestWorkerJobResultConflict(t *testing.T) {
 
 func TestWorkerJobResultStoreError(t *testing.T) {
 	st := &mockStore{
-		finishJobFn: func(context.Context, string, string, int64, bool, []types.JobLogEntry) error {
+		finishJobFn: func(context.Context, string, string, int64, bool, *types.JobLogArtifactInput) error {
 			return errors.New("db down")
 		},
 	}

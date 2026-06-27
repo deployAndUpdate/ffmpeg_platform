@@ -40,17 +40,33 @@ func TestMigrateUpStatusAndDown(t *testing.T) {
 	if err != nil {
 		t.Fatalf("status: %v", err)
 	}
-	if st.Version != 5 {
-		t.Fatalf("version = %d, want 5", st.Version)
+	if st.Version != 6 {
+		t.Fatalf("version = %d, want 6", st.Version)
 	}
 	if st.Dirty {
 		t.Fatal("expected clean migration state")
 	}
 
 	assertTableExists(t, dsn, "job_outbox")
+	assertTableExists(t, dsn, "job_log_artifacts")
+	assertTableMissing(t, dsn, "job_logs")
 
 	if err := migrate.UpDSN(dsn); err != nil {
 		t.Fatalf("second up: %v", err)
+	}
+
+	if err := mg.Down(1); err != nil {
+		t.Fatalf("down from 6: %v", err)
+	}
+	assertTableMissing(t, dsn, "job_log_artifacts")
+	assertTableExists(t, dsn, "job_logs")
+
+	st, err = mg.Status()
+	if err != nil {
+		t.Fatalf("status after down from 6: %v", err)
+	}
+	if st.Version != 5 {
+		t.Fatalf("version = %d, want 5", st.Version)
 	}
 
 	if err := mg.Down(1); err != nil {
@@ -137,10 +153,12 @@ func TestMigrateLegacyInitSchemaBaseline(t *testing.T) {
 	if err != nil {
 		t.Fatalf("status: %v", err)
 	}
-	if st.Version != 5 || st.Dirty {
-		t.Fatalf("status = version %d dirty %t, want 5 false", st.Version, st.Dirty)
+	if st.Version != 6 || st.Dirty {
+		t.Fatalf("status = version %d dirty %t, want 6 false", st.Version, st.Dirty)
 	}
 	assertTableExists(t, dsn, "job_outbox")
+	assertTableExists(t, dsn, "job_log_artifacts")
+	assertTableMissing(t, dsn, "job_logs")
 }
 
 func applyLegacyInitSchema(t *testing.T, dsn string) {

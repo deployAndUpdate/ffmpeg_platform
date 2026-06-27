@@ -141,15 +141,23 @@ func (r *R2) StatObject(ctx context.Context, key string) (ObjectStat, error) {
 	return ObjectStat{Size: size}, nil
 }
 
-func (r *R2) Download(ctx context.Context, key, localPath string) error {
+func (r *R2) OpenObject(ctx context.Context, key string) (io.ReadCloser, error) {
 	out, err := r.client.GetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(r.bucket),
 		Key:    aws.String(key),
 	})
 	if err != nil {
-		return fmt.Errorf("get object %q: %w", key, err)
+		return nil, fmt.Errorf("get object %q: %w", key, err)
 	}
-	defer out.Body.Close()
+	return out.Body, nil
+}
+
+func (r *R2) Download(ctx context.Context, key, localPath string) error {
+	body, err := r.OpenObject(ctx, key)
+	if err != nil {
+		return err
+	}
+	defer body.Close()
 
 	if err := os.MkdirAll(filepath.Dir(localPath), 0o755); err != nil {
 		return fmt.Errorf("create download dir: %w", err)
@@ -161,7 +169,7 @@ func (r *R2) Download(ctx context.Context, key, localPath string) error {
 	}
 	defer f.Close()
 
-	if _, err := io.Copy(f, out.Body); err != nil {
+	if _, err := io.Copy(f, body); err != nil {
 		return fmt.Errorf("write local file: %w", err)
 	}
 	return nil

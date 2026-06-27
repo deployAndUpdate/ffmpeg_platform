@@ -80,6 +80,25 @@ type JobLog struct {
 	Line   string    `json:"line"`
 }
 
+// JobLogArtifact describes an R2 object holding logs for one job attempt.
+type JobLogArtifact struct {
+	ID        int64     `json:"id"`
+	JobID     string    `json:"job_id"`
+	Attempt   int       `json:"attempt"`
+	ObjectKey string    `json:"object_key"`
+	Bytes     int64     `json:"bytes"`
+	Lines     int       `json:"lines"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// JobLogArtifactInput is metadata recorded after logs are uploaded to object storage.
+type JobLogArtifactInput struct {
+	Attempt   int
+	ObjectKey string
+	Bytes     int64
+	Lines     int
+}
+
 // WorkerStats extends Worker with live workload counters for the admin dashboard.
 type WorkerStats struct {
 	Worker

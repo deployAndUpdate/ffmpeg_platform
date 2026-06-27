@@ -357,7 +357,7 @@
         </div>
         <div class="card">
           <h4>PostgreSQL</h4>
-          <p data-i18n="overview.card.postgres">Единственный источник истины: jobs, workers, job_logs, lease TTL.</p>
+          <p data-i18n="overview.card.postgres">Единственный источник истины: jobs, workers, job_log_artifacts, lease TTL. Тела логов — в R2.</p>
         </div>
       </div>
     </section>
@@ -369,13 +369,16 @@
 │  (curl/API) │                  │  cmd/scheduler   │
 └─────────────┘                  └────────┬─────────┘
                                           │
-                                          ▼
-                                 ┌──────────────────┐
-                                 │   PostgreSQL     │
-                                 │  jobs / workers  │
-                                 │  job_logs        │
-                                 └────────┬─────────┘
-                                          │
+                    ┌─────────────────────┼─────────────────────┐
+                    ▼                     ▼                     ▼
+           ┌────────────────┐    ┌───────────────┐    ┌───────────────┐
+           │   PostgreSQL   │    │ Cloudflare R2 │    │   RabbitMQ    │
+           │ jobs / workers │    │ input/output  │    │  dispatch     │
+           │ log_artifacts  │    │ job logs      │    │               │
+           └────────┬───────┘    └───────┬───────┘    └───────┬───────┘
+                    │                    │                    │
+                    └────────────────────┼────────────────────┘
+                                         ▼
                     ┌─────────────────────┼─────────────────────┐
                     ▼                     ▼                     ▼
              ┌───────────┐         ┌───────────┐         ┌───────────┐
@@ -490,8 +493,18 @@
         </tbody>
       </table>
 
-      <h3 data-i18n="database.logsTable">Таблица <code>job_logs</code></h3>
-      <p data-i18n="database.logsDesc">Строки stdout/stderr с таймштампом. Записываются при финализации job в транзакции с обновлением статуса.</p>
+      <h3 data-i18n="database.logsTable">Таблица <code>job_log_artifacts</code></h3>
+      <p data-i18n="database.logsDesc">Метаданные логов stdout/stderr по попыткам job. Тело логов — JSON Lines в R2 (<code>jobs/{id}/logs/attempt-{n}.jsonl</code>). Scheduler загружает объект при <code>POST /workers/job-result</code> и записывает строку в транзакции с обновлением статуса job.</p>
+      <table>
+        <thead><tr><th data-i18n="database.col.field">Поле</th><th data-i18n="database.col.type">Тип</th><th data-i18n="database.col.desc">Описание</th></tr></thead>
+        <tbody>
+          <tr><td><code>job_id</code></td><td>UUID</td><td data-i18n="database.logArtifacts.jobId">FK на jobs</td></tr>
+          <tr><td><code>attempt</code></td><td>INT</td><td data-i18n="database.logArtifacts.attempt">Номер попытки (unique с job_id)</td></tr>
+          <tr><td><code>object_key</code></td><td>TEXT</td><td data-i18n="database.logArtifacts.key">Ключ объекта в R2</td></tr>
+          <tr><td><code>bytes</code></td><td>BIGINT</td><td data-i18n="database.logArtifacts.bytes">Размер файла логов</td></tr>
+          <tr><td><code>lines</code></td><td>INT</td><td data-i18n="database.logArtifacts.lines">Число непустых строк</td></tr>
+        </tbody>
+      </table>
     </section>
 
     <section id="api">
@@ -628,7 +641,7 @@ curl -s http://localhost:8080/jobs/JOB_ID | jq '{status, download_url}'</code></
       <p data-i18n="api.upload.limit">Лимит размера: env <code>MAX_UPLOAD_BYTES</code> (по умолчанию 512 MiB). Таймаут upload: <code>SCHEDULER_UPLOAD_TIMEOUT</code> (по умолчанию 30m).</p>
 
       <h3 data-i18n="api.r2.title">Cloudflare R2 (object storage)</h3>
-      <p data-i18n="api.r2.intro">Если заданы переменные <code>R2_*</code>, scheduler и worker используют R2. Клиент загружает файл напрямую в bucket по presigned URL; воркер скачивает объект, обрабатывает ffmpeg и загружает результат обратно.</p>
+      <p data-i18n="api.r2.intro">Если заданы переменные <code>R2_*</code>, scheduler и worker используют R2 для input/output и для логов job. Клиент загружает файл напрямую в bucket по presigned URL; воркер скачивает объект, обрабатывает ffmpeg и загружает результат обратно; scheduler сохраняет stdout/stderr в <code>jobs/{id}/logs/attempt-{n}.jsonl</code>.</p>
 
       <p data-i18n="api.r2.initBody"><strong>POST /jobs/init</strong> — тело запроса:</p>
       <pre><code>{
@@ -662,7 +675,7 @@ curl -s "http://localhost:8080/jobs/$JOB_ID" | jq '.download_url'</code></pre>
     { "id": 1, "ts": "2026-06-24T12:00:00Z", "stream": "stderr", "line": "..." }
   ]
 }</code></pre>
-      <p data-i18n="api.jobs.logsNote">При отсутствии логов возвращается пустой массив <code>logs</code>. Записи упорядочены по <code>ts</code>, затем по <code>id</code>.</p>
+      <p data-i18n="api.jobs.logsNote">Требует настроенный R2 на scheduler; иначе <code>503 object storage is not configured</code>. При отсутствии логов — пустой массив <code>logs</code>. Записи упорядочены по попытке, затем по <code>ts</code> и <code>id</code>.</p>
 
       <h3>Workers</h3>
       <table>
@@ -833,7 +846,7 @@ curl -s "http://localhost:8080/jobs/$JOB_ID" | jq '.download_url'</code></pre>
       <p data-i18n="env.submitJobs.intro">Скрипт <code>scripts/submit-jobs.sh</code> интерактивно запрашивает client API key и число <code>N</code>, затем отправляет <code>N</code> multipart-запросов <code>POST /jobs</code> с файлом <code>testdata/sample.mp4</code> (fallback: <code>testdata/fixtures/sample.mp4</code>). Требует настроенный R2 на scheduler.</p>
       <pre><code>./scripts/submit-jobs.sh
 SCHEDULER_URL=http://localhost:8080 ./scripts/submit-jobs.sh</code></pre>
-      <p data-i18n="env.r2.note">* Для R2-flow нужны вместе: <code>R2_BUCKET</code>, <code>R2_ACCESS_KEY_ID</code>, <code>R2_SECRET_ACCESS_KEY</code>, <code>R2_ENDPOINT</code> — на scheduler и worker.</p>
+      <p data-i18n="env.r2.note">* Для R2 (input/output и логи job) нужны вместе: <code>R2_BUCKET</code>, <code>R2_ACCESS_KEY_ID</code>, <code>R2_SECRET_ACCESS_KEY</code>, <code>R2_ENDPOINT</code> — на scheduler и worker.</p>
 
       <h3 data-i18n="env.worker">Worker (<code>cmd/worker</code>)</h3>
       <table>
@@ -1087,7 +1100,6 @@ make ci</code></pre>
       <h2 data-i18n="limitations.title">Ограничения и TODO</h2>
       <ul>
         <li data-i18n="limitations.atLeastOnce">At-least-once семантика — возможны дублирующиеся запуски ffmpeg</li>
-        <li data-i18n="limitations.logs">Логи хранятся в PostgreSQL — не оптимально для очень больших объёмов</li>
         <li data-i18n="limitations.gpu">Фильтрация job по GPU/CPU пока не используется при выдаче</li>
       </ul>
     </section>
@@ -1118,10 +1130,10 @@ make ci</code></pre>
         'hero.title': 'Distributed Video Compression Platform',
         'hero.desc': 'Отказоустойчивая платформа для запуска <code>ffmpeg</code> на нескольких узлах. Планировщик (Scheduler) принимает задания через HTTP API, воркеры забирают их из очереди PostgreSQL и выполняют транскодирование.',
         'overview.title': 'Обзор',
-        'overview.p1': 'Проект реализует минимально жизнеспособную распределённую систему обработки видео. Dispatch через RabbitMQ (transactional outbox); PostgreSQL хранит состояние job, workers и logs.',
+        'overview.p1': 'Проект реализует минимально жизнеспособную распределённую систему обработки видео. Dispatch через RabbitMQ (transactional outbox); PostgreSQL хранит состояние job и workers; логи job — в R2 (метаданные в <code>job_log_artifacts</code>).',
         'overview.card.scheduler': 'HTTP API: создание job, регистрация воркеров, выдача задач, финализация результатов.',
         'overview.card.worker': 'Регистрация, heartbeat, polling заданий, запуск ffmpeg, отправка логов.',
-        'overview.card.postgres': 'Единственный источник истины: jobs, workers, job_logs, lease TTL.',
+        'overview.card.postgres': 'Единственный источник истины: jobs, workers, job_log_artifacts, lease TTL. Тела логов — в R2.',
         'architecture.title': 'Архитектура',
         'architecture.principles': 'Ключевые принципы',
         'architecture.atLeastOnce': '<strong>Effectively-once</strong> — lease renewal, skip готового output и <code>lease_generation</code> снижают дубли transcode; reaper остаётся safety net.',
@@ -1155,7 +1167,7 @@ make ci</code></pre>
         'database.migrator': 'CLI <code>cmd/migrate</code>: <code>up</code>, <code>down [N]</code>, <code>status</code>, <code>backup</code>. Версии хранятся в таблице <code>schema_migrations</code> (golang-migrate).',
         'database.workersTable': 'Таблица <code>workers</code>',
         'database.jobsTable': 'Таблица <code>jobs</code>',
-        'database.logsTable': 'Таблица <code>job_logs</code>',
+        'database.logsTable': 'Таблица <code>job_log_artifacts</code>',
         'database.col.field': 'Поле',
         'database.col.type': 'Тип',
         'database.col.desc': 'Описание',
@@ -1180,7 +1192,12 @@ make ci</code></pre>
         'database.jobs.leaseGen': 'Fencing: +1 при каждом acquire, проверка в renew/finish',
         'database.jobs.idempotency': 'Уникальный ключ создания (nullable)',
         'database.jobs.maxDuration': 'Лимит runtime ffmpeg (0 = default по preset/env)',
-        'database.logsDesc': 'Строки stdout/stderr с таймштампом. Записываются при финализации job в транзакции с обновлением статуса.',
+        'database.logsDesc': 'Метаданные логов stdout/stderr по попыткам job. Тело логов — JSON Lines в R2 (<code>jobs/{id}/logs/attempt-{n}.jsonl</code>). Scheduler загружает объект при <code>POST /workers/job-result</code> и записывает строку в транзакции с обновлением статуса job.',
+        'database.logArtifacts.jobId': 'FK на jobs',
+        'database.logArtifacts.attempt': 'Номер попытки (unique с job_id)',
+        'database.logArtifacts.key': 'Ключ объекта в R2',
+        'database.logArtifacts.bytes': 'Размер файла логов',
+        'database.logArtifacts.lines': 'Число непустых строк',
         'api.title': 'HTTP API',
         'api.intro': 'Базовый URL: <code>http://&lt;scheduler-host&gt;:8080</code>. JSON для локальных job; <code>multipart/form-data</code> для upload в R2 через <code>POST /jobs</code>.',
         'api.auth.title': 'Аутентификация',
@@ -1222,12 +1239,12 @@ make ci</code></pre>
         'api.upload.attempts': 'Опционально, по умолчанию 3',
         'api.upload.limit': 'Лимит размера: env <code>MAX_UPLOAD_BYTES</code> (по умолчанию 512 MiB). Таймаут upload: <code>SCHEDULER_UPLOAD_TIMEOUT</code> (по умолчанию 30m).',
         'api.r2.title': 'Cloudflare R2 (object storage)',
-        'api.r2.intro': 'Если заданы переменные <code>R2_*</code>, scheduler и worker используют R2. Клиент загружает файл напрямую в bucket по presigned URL; воркер скачивает объект, обрабатывает ffmpeg и загружает результат обратно.',
+        'api.r2.intro': 'Если заданы переменные <code>R2_*</code>, scheduler и worker используют R2 для input/output и для логов job. Клиент загружает файл напрямую в bucket по presigned URL; воркер скачивает объект, обрабатывает ffmpeg и загружает результат обратно; scheduler сохраняет stdout/stderr в <code>jobs/{id}/logs/attempt-{n}.jsonl</code>.',
         'api.r2.initBody': '<strong>POST /jobs/init</strong> — тело запроса:',
         'api.r2.initNote': 'Ответ <code>201 Created</code>: объект <code>job</code> (<code>status: "NEW"</code>), <code>upload_url</code>, <code>upload_expires_at</code>, <code>bucket</code>.',
         'api.r2.downloadNote': 'Для job со статусом <code>COMPLETED</code> и <code>storage: "r2"</code> ответ <code>GET /jobs/{id}</code> содержит <code>download_url</code> и <code>download_expires_at</code> (presigned GET).',
         'api.jobs.logsBody': '<strong>GET /jobs/{id}/logs</strong> — ответ <code>200 OK</code> или <code>404</code>, если job не найден:',
-        'api.jobs.logsNote': 'При отсутствии логов возвращается пустой массив <code>logs</code>. Записи упорядочены по <code>ts</code>, затем по <code>id</code>.',
+        'api.jobs.logsNote': 'Требует настроенный R2 на scheduler; иначе <code>503 object storage is not configured</code>. При отсутствии логов — пустой массив <code>logs</code>. Записи упорядочены по попытке, затем по <code>ts</code> и <code>id</code>.',
         'api.workers.register': 'Регистрация или обновление воркера',
         'api.workers.heartbeat': 'Heartbeat воркера',
         'api.workers.request': 'Запрос следующего job (SKIP LOCKED + lease)',
@@ -1299,7 +1316,7 @@ make ci</code></pre>
         'env.r2.endpoint': 'S3 endpoint из Cloudflare R2, напр. <code>https://&lt;account_id&gt;.r2.cloudflarestorage.com</code>',
         'env.r2.uploadTTL': 'Срок presigned PUT',
         'env.r2.downloadTTL': 'Срок presigned GET',
-        'env.r2.note': '* Для R2-flow нужны вместе: <code>R2_BUCKET</code>, <code>R2_ACCESS_KEY_ID</code>, <code>R2_SECRET_ACCESS_KEY</code>, <code>R2_ENDPOINT</code> — на scheduler и worker.',
+        'env.r2.note': '* Для R2 (input/output и логи job) нужны вместе: <code>R2_BUCKET</code>, <code>R2_ACCESS_KEY_ID</code>, <code>R2_SECRET_ACCESS_KEY</code>, <code>R2_ENDPOINT</code> — на scheduler и worker.',
         'env.auth.note': '* При <code>SCHEDULER_API_KEY_REQUIRED=true</code> обязательны <code>SCHEDULER_CLIENT_API_KEY</code> и <code>SCHEDULER_WORKER_API_KEY</code>. Auth включается также при задании любого из ключей.',
         'env.genKeys.title': 'Генерация API-ключей',
         'env.genKeys.intro': 'Скрипт <code>scripts/gen-api-keys.sh</code> создаёт три случайных ключа через <code>openssl rand</code>. Вывод идёт в stdout — для prod скопируйте значения в secrets manager, не коммитьте их в репозиторий.',
@@ -1396,10 +1413,10 @@ make ci</code></pre>
         'hero.title': 'Distributed Video Compression Platform',
         'hero.desc': 'Fault-tolerant platform for running <code>ffmpeg</code> across multiple nodes. The scheduler accepts jobs via HTTP API; workers pull from a PostgreSQL queue and transcode video.',
         'overview.title': 'Overview',
-        'overview.p1': 'The project implements a minimum viable distributed video processing system. Dispatch uses RabbitMQ (transactional outbox); PostgreSQL stores job state, workers, and logs.',
+        'overview.p1': 'The project implements a minimum viable distributed video processing system. Dispatch uses RabbitMQ (transactional outbox); PostgreSQL stores job state and workers; job logs live in R2 (metadata in <code>job_log_artifacts</code>).',
         'overview.card.scheduler': 'HTTP API: create jobs, register workers, dispatch tasks, finalize results.',
         'overview.card.worker': 'Registration, heartbeat, job polling, ffmpeg execution, log upload.',
-        'overview.card.postgres': 'Single source of truth: jobs, workers, job_logs, lease TTL.',
+        'overview.card.postgres': 'Single source of truth: jobs, workers, job_log_artifacts, lease TTL. Log bodies live in R2.',
         'architecture.title': 'Architecture',
         'architecture.principles': 'Key principles',
         'architecture.atLeastOnce': '<strong>Effectively-once</strong> — lease renewal, skipping valid output, and <code>lease_generation</code> reduce duplicate transcodes; reaper remains a safety net.',
@@ -1433,7 +1450,7 @@ make ci</code></pre>
         'database.migrator': 'CLI <code>cmd/migrate</code>: <code>up</code>, <code>down [N]</code>, <code>status</code>, <code>backup</code>. Versions are tracked in <code>schema_migrations</code> (golang-migrate).',
         'database.workersTable': 'Table <code>workers</code>',
         'database.jobsTable': 'Table <code>jobs</code>',
-        'database.logsTable': 'Table <code>job_logs</code>',
+        'database.logsTable': 'Table <code>job_log_artifacts</code>',
         'database.col.field': 'Field',
         'database.col.type': 'Type',
         'database.col.desc': 'Description',
@@ -1458,7 +1475,12 @@ make ci</code></pre>
         'database.jobs.leaseGen': 'Fencing: +1 on each acquire, checked on renew/finish',
         'database.jobs.idempotency': 'Unique create key (nullable)',
         'database.jobs.maxDuration': 'ffmpeg runtime limit (0 = preset/env default)',
-        'database.logsDesc': 'stdout/stderr lines with timestamps. Written on job finalization in a transaction with status update.',
+        'database.logsDesc': 'Metadata for stdout/stderr logs per job attempt. Log bodies are JSON Lines in R2 (<code>jobs/{id}/logs/attempt-{n}.jsonl</code>). Scheduler uploads on <code>POST /workers/job-result</code> and inserts a row in the same transaction as the job status update.',
+        'database.logArtifacts.jobId': 'FK to jobs',
+        'database.logArtifacts.attempt': 'Attempt number (unique with job_id)',
+        'database.logArtifacts.key': 'R2 object key',
+        'database.logArtifacts.bytes': 'Log file size in bytes',
+        'database.logArtifacts.lines': 'Count of non-empty lines',
         'api.title': 'HTTP API',
         'api.intro': 'Base URL: <code>http://&lt;scheduler-host&gt;:8080</code>. JSON for local jobs; <code>multipart/form-data</code> for R2 upload via <code>POST /jobs</code>.',
         'api.auth.title': 'Authentication',
@@ -1500,12 +1522,12 @@ make ci</code></pre>
         'api.upload.attempts': 'Optional, default 3',
         'api.upload.limit': 'Size limit: env <code>MAX_UPLOAD_BYTES</code> (default 512 MiB). Upload timeout: <code>SCHEDULER_UPLOAD_TIMEOUT</code> (default 30m).',
         'api.r2.title': 'Cloudflare R2 (object storage)',
-        'api.r2.intro': 'When <code>R2_*</code> env vars are set, scheduler and worker use R2. The client uploads directly to the bucket via presigned URL; the worker downloads, runs ffmpeg, and uploads the result.',
+        'api.r2.intro': 'When <code>R2_*</code> env vars are set, scheduler and worker use R2 for input/output and job logs. The client uploads via presigned URL; the worker downloads, runs ffmpeg, uploads the result; scheduler stores stdout/stderr at <code>jobs/{id}/logs/attempt-{n}.jsonl</code>.',
         'api.r2.initBody': '<strong>POST /jobs/init</strong> — request body:',
         'api.r2.initNote': 'Response <code>201 Created</code>: <code>job</code> object (<code>status: "NEW"</code>), <code>upload_url</code>, <code>upload_expires_at</code>, <code>bucket</code>.',
         'api.r2.downloadNote': 'For <code>COMPLETED</code> jobs with <code>storage: "r2"</code>, <code>GET /jobs/{id}</code> includes <code>download_url</code> and <code>download_expires_at</code> (presigned GET).',
         'api.jobs.logsBody': '<strong>GET /jobs/{id}/logs</strong> — response <code>200 OK</code> or <code>404</code> if job not found:',
-        'api.jobs.logsNote': 'Returns empty <code>logs</code> array when no logs exist. Ordered by <code>ts</code>, then <code>id</code>.',
+        'api.jobs.logsNote': 'Requires R2 on scheduler; otherwise <code>503 object storage is not configured</code>. Returns empty <code>logs</code> when none exist. Ordered by attempt, then <code>ts</code> and <code>id</code>.',
         'api.workers.register': 'Register or update worker',
         'api.workers.heartbeat': 'Worker heartbeat',
         'api.workers.request': 'Request next job (SKIP LOCKED + lease)',
@@ -1577,7 +1599,7 @@ make ci</code></pre>
         'env.r2.endpoint': 'S3 endpoint from Cloudflare R2, e.g. <code>https://&lt;account_id&gt;.r2.cloudflarestorage.com</code>',
         'env.r2.uploadTTL': 'Presigned PUT lifetime',
         'env.r2.downloadTTL': 'Presigned GET lifetime',
-        'env.r2.note': '* R2 flow requires <code>R2_BUCKET</code>, <code>R2_ACCESS_KEY_ID</code>, <code>R2_SECRET_ACCESS_KEY</code>, and <code>R2_ENDPOINT</code> on both scheduler and worker.',
+        'env.r2.note': '* R2 (input/output and job logs) requires <code>R2_BUCKET</code>, <code>R2_ACCESS_KEY_ID</code>, <code>R2_SECRET_ACCESS_KEY</code>, and <code>R2_ENDPOINT</code> on both scheduler and worker.',
         'env.auth.note': '* When <code>SCHEDULER_API_KEY_REQUIRED=true</code>, <code>SCHEDULER_CLIENT_API_KEY</code> and <code>SCHEDULER_WORKER_API_KEY</code> are required. Auth is also enabled when any key is set.',
         'env.genKeys.title': 'Generating API keys',
         'env.genKeys.intro': 'Script <code>scripts/gen-api-keys.sh</code> creates three random keys via <code>openssl rand</code>. Output goes to stdout — for production, copy values into a secrets manager; do not commit them.',
@@ -1674,10 +1696,10 @@ make ci</code></pre>
         'hero.title': 'Distributed Video Compression Platform',
         'hero.desc': 'Відмовостійка платформа для запуску <code>ffmpeg</code> на кількох вузлах. Планувальник (Scheduler) приймає завдання через HTTP API, воркери забирають їх з черги PostgreSQL і виконують транскодування.',
         'overview.title': 'Огляд',
-        'overview.p1': 'Проєкт реалізує мінімально життєздатну розподілену систему обробки відео. Dispatch через RabbitMQ (transactional outbox); PostgreSQL зберігає стан job, workers і logs.',
+        'overview.p1': 'Проєкт реалізує мінімально життєздатну розподілену систему обробки відео. Dispatch через RabbitMQ (transactional outbox); PostgreSQL зберігає стан job і workers; логи job — у R2 (метадані в <code>job_log_artifacts</code>).',
         'overview.card.scheduler': 'HTTP API: створення job, реєстрація воркерів, видача завдань, фіналізація результатів.',
         'overview.card.worker': 'Реєстрація, heartbeat, polling завдань, запуск ffmpeg, надсилання логів.',
-        'overview.card.postgres': 'Єдине джерело істини: jobs, workers, job_logs, lease TTL.',
+        'overview.card.postgres': 'Єдине джерело істини: jobs, workers, job_log_artifacts, lease TTL. Тіла логів — у R2.',
         'architecture.title': 'Архітектура',
         'architecture.principles': 'Ключові принципи',
         'architecture.atLeastOnce': '<strong>Effectively-once</strong> — lease renewal, skip готового output і lease_generation знижують дублі transcode; reaper залишається safety net.',
@@ -1711,7 +1733,7 @@ make ci</code></pre>
         'database.migrator': 'CLI <code>cmd/migrate</code>: <code>up</code>, <code>down [N]</code>, <code>status</code>, <code>backup</code>. Версії зберігаються в таблиці <code>schema_migrations</code> (golang-migrate).',
         'database.workersTable': 'Таблиця <code>workers</code>',
         'database.jobsTable': 'Таблиця <code>jobs</code>',
-        'database.logsTable': 'Таблиця <code>job_logs</code>',
+        'database.logsTable': 'Таблиця <code>job_log_artifacts</code>',
         'database.col.field': 'Поле',
         'database.col.type': 'Тип',
         'database.col.desc': 'Опис',
@@ -1733,7 +1755,12 @@ make ci</code></pre>
         'database.jobs.attempt': 'Номер спроби',
         'database.jobs.maxAttempts': 'Максимум спроб (за замовчуванням 3)',
         'database.jobs.lease': 'Термін lease при RUNNING',
-        'database.logsDesc': 'Рядки stdout/stderr з міткою часу. Записуються при фіналізації job у транзакції з оновленням статусу.',
+        'database.logsDesc': 'Метадані логів stdout/stderr за спробами job. Тіло логів — JSON Lines у R2 (<code>jobs/{id}/logs/attempt-{n}.jsonl</code>). Scheduler завантажує об’єкт при <code>POST /workers/job-result</code> і записує рядок у транзакції з оновленням статусу job.',
+        'database.logArtifacts.jobId': 'FK на jobs',
+        'database.logArtifacts.attempt': 'Номер спроби (unique з job_id)',
+        'database.logArtifacts.key': 'Ключ об’єкта в R2',
+        'database.logArtifacts.bytes': 'Розмір файлу логів',
+        'database.logArtifacts.lines': 'Кількість непустих рядків',
         'api.title': 'HTTP API',
         'api.intro': 'Базовий URL: <code>http://&lt;scheduler-host&gt;:8080</code>. JSON для локальних job; <code>multipart/form-data</code> для upload у R2 через <code>POST /jobs</code>.',
         'api.auth.title': 'Аутентифікація',
@@ -1775,12 +1802,12 @@ make ci</code></pre>
         'api.upload.attempts': 'Опціонально, за замовчуванням 3',
         'api.upload.limit': 'Ліміт розміру: env <code>MAX_UPLOAD_BYTES</code> (за замовчуванням 512 MiB). Таймаут upload: <code>SCHEDULER_UPLOAD_TIMEOUT</code> (за замовчуванням 30m).',
         'api.r2.title': 'Cloudflare R2 (object storage)',
-        'api.r2.intro': 'Якщо задані змінні <code>R2_*</code>, scheduler і worker використовують R2. Клієнт завантажує файл напряму в bucket за presigned URL; воркер завантажує об\'єкт, обробляє ffmpeg і вивантажує результат.',
+        'api.r2.intro': 'Якщо задані змінні <code>R2_*</code>, scheduler і worker використовують R2 для input/output і логів job. Клієнт завантажує файл за presigned URL; воркер обробляє ffmpeg і вивантажує результат; scheduler зберігає stdout/stderr у <code>jobs/{id}/logs/attempt-{n}.jsonl</code>.',
         'api.r2.initBody': '<strong>POST /jobs/init</strong> — тіло запиту:',
         'api.r2.initNote': 'Відповідь <code>201 Created</code>: об\'єкт <code>job</code> (<code>status: "NEW"</code>), <code>upload_url</code>, <code>upload_expires_at</code>, <code>bucket</code>.',
         'api.r2.downloadNote': 'Для job зі статусом <code>COMPLETED</code> і <code>storage: "r2"</code> відповідь <code>GET /jobs/{id}</code> містить <code>download_url</code> та <code>download_expires_at</code> (presigned GET).',
         'api.jobs.logsBody': '<strong>GET /jobs/{id}/logs</strong> — відповідь <code>200 OK</code> або <code>404</code>, якщо job не знайдено:',
-        'api.jobs.logsNote': 'При відсутності логів повертається порожній масив <code>logs</code>. Записи впорядковані за <code>ts</code>, потім за <code>id</code>.',
+        'api.jobs.logsNote': 'Потрібен налаштований R2 на scheduler; інакше <code>503 object storage is not configured</code>. Якщо логів немає — порожній масив <code>logs</code>. Записи впорядковані за спробою, потім за <code>ts</code> і <code>id</code>.',
         'api.workers.register': 'Реєстрація або оновлення воркера',
         'api.workers.heartbeat': 'Heartbeat воркера',
         'api.workers.request': 'Запит наступного job (SKIP LOCKED + lease)',
@@ -1845,7 +1872,7 @@ make ci</code></pre>
         'env.r2.endpoint': 'S3 endpoint з Cloudflare R2, напр. <code>https://&lt;account_id&gt;.r2.cloudflarestorage.com</code>',
         'env.r2.uploadTTL': 'Термін presigned PUT',
         'env.r2.downloadTTL': 'Термін presigned GET',
-        'env.r2.note': '* Для R2-flow потрібні разом: <code>R2_BUCKET</code>, <code>R2_ACCESS_KEY_ID</code>, <code>R2_SECRET_ACCESS_KEY</code>, <code>R2_ENDPOINT</code> — на scheduler і worker.',
+        'env.r2.note': '* Для R2 (input/output і логи job) потрібні разом: <code>R2_BUCKET</code>, <code>R2_ACCESS_KEY_ID</code>, <code>R2_SECRET_ACCESS_KEY</code>, <code>R2_ENDPOINT</code> — на scheduler і worker.',
         'env.auth.note': '* При <code>SCHEDULER_API_KEY_REQUIRED=true</code> обов\'язкові <code>SCHEDULER_CLIENT_API_KEY</code> і <code>SCHEDULER_WORKER_API_KEY</code>. Auth також увімкнена при заданні будь-якого ключа.',
         'env.genKeys.title': 'Генерація API-ключів',
         'env.genKeys.intro': 'Скрипт <code>scripts/gen-api-keys.sh</code> створює три випадкові ключі через <code>openssl rand</code>. Вивід у stdout — для prod скопіюйте значення в secrets manager, не комітьте їх у репозиторій.',

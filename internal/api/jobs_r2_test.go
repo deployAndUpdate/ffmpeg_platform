@@ -63,7 +63,10 @@ func (m *mockObjectStorage) StatObject(ctx context.Context, key string) (storage
 	return storage.ObjectStat{Size: 1024}, nil
 }
 func (m *mockObjectStorage) Download(context.Context, string, string) error { return nil }
-func (m *mockObjectStorage) Upload(context.Context, string, string) error   { return nil }
+func (m *mockObjectStorage) OpenObject(context.Context, string) (io.ReadCloser, error) {
+	return io.NopCloser(strings.NewReader("")), nil
+}
+func (m *mockObjectStorage) Upload(context.Context, string, string) error { return nil }
 func (m *mockObjectStorage) UploadReader(context.Context, string, io.Reader, int64, string) error {
 	return nil
 }
