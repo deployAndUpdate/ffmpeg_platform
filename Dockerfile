@@ -20,6 +20,9 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
     go build -trimpath -ldflags="-s -w" -o /out/worker ./cmd/worker
 
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
+    go build -trimpath -ldflags="-s -w" -o /out/migrate ./cmd/migrate
+
 # --- Scheduler runtime (HTTP API, без ffmpeg) ---
 
 FROM alpine:3.20 AS scheduler
@@ -35,9 +38,24 @@ USER app
 EXPOSE 8080
 
 HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=3 \
-    CMD wget -q --spider http://127.0.0.1:8080/health || exit 1
+    CMD wget -q -O /dev/null http://127.0.0.1:8080/ready || exit 1
 
 ENTRYPOINT ["/usr/local/bin/scheduler"]
+
+# --- Migrate runtime (one-shot schema migrations) ---
+
+FROM alpine:3.20 AS migrate
+
+RUN apk add --no-cache ca-certificates postgresql-client \
+    && addgroup -S app \
+    && adduser -S app -G app
+
+COPY --from=builder /out/migrate /usr/local/bin/migrate
+
+USER app
+
+ENTRYPOINT ["/usr/local/bin/migrate"]
+CMD ["up"]
 
 # --- Worker runtime (ffmpeg + общий том /data) ---
 

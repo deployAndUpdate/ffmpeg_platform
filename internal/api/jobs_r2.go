@@ -30,18 +30,31 @@ func (s *Server) handleJobsInit(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) initR2Job(w http.ResponseWriter, r *http.Request) {
 	type req struct {
-		FFmpegArgs     string `json:"ffmpeg_args"`
-		InputFilename  string `json:"input_filename"`
-		OutputExt      string `json:"output_ext"`
-		MaxAttempts    int    `json:"max_attempts"`
+		Preset        string `json:"preset"`
+		FFmpegArgs    string `json:"ffmpeg_args"`
+		InputFilename string `json:"input_filename"`
+		OutputExt     string `json:"output_ext"`
+		MaxAttempts        int    `json:"max_attempts"`
+		MaxDurationSeconds int    `json:"max_duration_seconds"`
 	}
 	var body req
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "invalid json", http.StatusBadRequest)
 		return
 	}
-	if body.FFmpegArgs == "" || body.InputFilename == "" || body.OutputExt == "" {
-		http.Error(w, "ffmpeg_args, input_filename, output_ext are required", http.StatusBadRequest)
+	if body.InputFilename == "" || body.OutputExt == "" {
+		http.Error(w, "input_filename and output_ext are required", http.StatusBadRequest)
+		return
+	}
+	outputExt := sanitizeOutputExt(body.OutputExt)
+	if outputExt == "" || outputExt == "bin" {
+		http.Error(w, "output_ext is required", http.StatusBadRequest)
+		return
+	}
+	spec, err := resolveTranscodeSpec(body.Preset, body.FFmpegArgs, outputExt)
+	if err != nil {
+		status, msg := transcodeSpecHTTPError(err)
+		http.Error(w, msg, status)
 		return
 	}
 	if body.MaxAttempts <= 0 {
@@ -49,7 +62,6 @@ func (s *Server) initR2Job(w http.ResponseWriter, r *http.Request) {
 	}
 
 	inputExt := storage.ExtFromFilename(body.InputFilename)
-	outputExt := sanitizeOutputExt(body.OutputExt)
 
 	id := uuid.New().String()
 	inputKey := s.storage.InputObjectKey(id, inputExt)
@@ -68,14 +80,16 @@ func (s *Server) initR2Job(w http.ResponseWriter, r *http.Request) {
 	uploadExpires := time.Now().UTC().Add(s.uploadPresignTTL())
 
 	job := &types.Job{
-		ID:          id,
-		InputPath:   inputKey,
-		OutputPath:  outputKey,
-		FFmpegArgs:  body.FFmpegArgs,
-		Storage:     types.StorageR2,
-		Status:      types.JobStatusNew,
-		Attempt:     0,
-		MaxAttempts: body.MaxAttempts,
+		ID:                 id,
+		InputPath:          inputKey,
+		OutputPath:         outputKey,
+		Preset:             spec.Preset,
+		FFmpegArgs:         spec.FFmpegArgs,
+		Storage:            types.StorageR2,
+		Status:             types.JobStatusNew,
+		Attempt:            0,
+		MaxAttempts:        body.MaxAttempts,
+		MaxDurationSeconds: resolveMaxDurationSeconds(body.MaxDurationSeconds, spec.Preset),
 	}
 	if err := s.store.CreateJob(ctx, job); err != nil {
 		log.Printf("create r2 job: %v", err)
@@ -154,6 +168,7 @@ func (s *Server) jobResponse(ctx context.Context, job *types.Job) map[string]any
 		"id":                 job.ID,
 		"input_path":         job.InputPath,
 		"output_path":        job.OutputPath,
+		"preset":             job.Preset,
 		"ffmpeg_args":        job.FFmpegArgs,
 		"storage":            job.Storage,
 		"status":             job.Status,
@@ -161,6 +176,8 @@ func (s *Server) jobResponse(ctx context.Context, job *types.Job) map[string]any
 		"attempt":            job.Attempt,
 		"max_attempts":       job.MaxAttempts,
 		"lease_expires_at":   job.LeaseExpiresAt,
+		"lease_generation":   job.LeaseGeneration,
+		"max_duration_seconds": job.MaxDurationSeconds,
 		"created_at":         job.CreatedAt,
 		"started_at":         job.StartedAt,
 		"finished_at":        job.FinishedAt,

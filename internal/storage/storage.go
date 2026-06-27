@@ -3,19 +3,28 @@ package storage
 import (
 	"context"
 	"fmt"
+	"io"
 	"time"
 )
 
-// ObjectStorage abstracts R2/S3-compatible object operations.
+// ObjectStat holds object metadata from a HEAD request.
+type ObjectStat struct {
+	Size int64
+}
+
 type ObjectStorage interface {
+	HealthCheck(ctx context.Context) error
 	Bucket() string
 	InputObjectKey(jobID, ext string) string
 	OutputObjectKey(jobID, ext string) string
 	PresignPut(ctx context.Context, key string, expiry time.Duration) (string, error)
 	PresignGet(ctx context.Context, key string, expiry time.Duration) (string, error)
 	Exists(ctx context.Context, key string) (bool, error)
+	StatObject(ctx context.Context, key string) (ObjectStat, error)
 	Download(ctx context.Context, key, localPath string) error
+	OpenObject(ctx context.Context, key string) (io.ReadCloser, error)
 	Upload(ctx context.Context, localPath, key string) error
+	UploadReader(ctx context.Context, key string, r io.Reader, size int64, contentType string) error
 }
 
 // NewFromEnv creates an R2 client when env vars are set.

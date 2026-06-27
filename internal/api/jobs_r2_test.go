@@ -16,10 +16,18 @@ import (
 )
 
 type mockObjectStorage struct {
-	bucket      string
-	existsFn    func(ctx context.Context, key string) (bool, error)
-	presignPut  func(ctx context.Context, key string, expiry time.Duration) (string, error)
-	presignGet  func(ctx context.Context, key string, expiry time.Duration) (string, error)
+	bucket        string
+	healthCheckFn func(ctx context.Context) error
+	existsFn      func(ctx context.Context, key string) (bool, error)
+	presignPut    func(ctx context.Context, key string, expiry time.Duration) (string, error)
+	presignGet    func(ctx context.Context, key string, expiry time.Duration) (string, error)
+}
+
+func (m *mockObjectStorage) HealthCheck(ctx context.Context) error {
+	if m.healthCheckFn != nil {
+		return m.healthCheckFn(ctx)
+	}
+	return nil
 }
 
 func (m *mockObjectStorage) Bucket() string { return m.bucket }
@@ -47,8 +55,21 @@ func (m *mockObjectStorage) Exists(ctx context.Context, key string) (bool, error
 	}
 	return true, nil
 }
+func (m *mockObjectStorage) StatObject(ctx context.Context, key string) (storage.ObjectStat, error) {
+	ok, err := m.Exists(ctx, key)
+	if err != nil || !ok {
+		return storage.ObjectStat{}, errors.New("not found")
+	}
+	return storage.ObjectStat{Size: 1024}, nil
+}
 func (m *mockObjectStorage) Download(context.Context, string, string) error { return nil }
-func (m *mockObjectStorage) Upload(context.Context, string, string) error   { return nil }
+func (m *mockObjectStorage) OpenObject(context.Context, string) (io.ReadCloser, error) {
+	return io.NopCloser(strings.NewReader("")), nil
+}
+func (m *mockObjectStorage) Upload(context.Context, string, string) error { return nil }
+func (m *mockObjectStorage) UploadReader(context.Context, string, io.Reader, int64, string) error {
+	return nil
+}
 
 func newTestServerWithStorage(st JobStore, obj storage.ObjectStorage) *httptest.Server {
 	return httptest.NewServer(NewServerWithStorage(st, obj, storage.Config{
@@ -85,9 +106,9 @@ func TestJobsInitSuccess(t *testing.T) {
 	defer srv.Close()
 
 	resp := jsonPost(t, srv.URL+"/jobs/init", map[string]any{
-		"ffmpeg_args":     "-vn -acodec libmp3lame -b:a 192k",
-		"input_filename":  "clip.mp4",
-		"output_ext":      "mp3",
+		"preset":         "mp3_192k",
+		"input_filename": "clip.mp4",
+		"output_ext":     "mp3",
 	})
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusCreated {
@@ -114,6 +135,12 @@ func TestJobsInitSuccess(t *testing.T) {
 	}
 	if captured == nil || !strings.HasPrefix(captured.InputPath, "jobs/") {
 		t.Fatalf("unexpected captured job: %+v", captured)
+	}
+	if captured.Preset != "mp3_192k" {
+		t.Fatalf("preset = %q, want mp3_192k", captured.Preset)
+	}
+	if captured.FFmpegArgs != "-vn -acodec libmp3lame -b:a 192k" {
+		t.Fatalf("ffmpeg_args = %q", captured.FFmpegArgs)
 	}
 }
 
@@ -209,7 +236,7 @@ func TestQueueJobIntegrationShape(t *testing.T) {
 		return &types.Job{
 			ID:      jobID,
 			Storage: types.StorageR2,
-			Status:  types.JobStatusQueued,
+			Status:  types.JobStatusDispatched,
 		}, nil
 	}
 

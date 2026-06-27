@@ -42,31 +42,55 @@ func TestClientRegister(t *testing.T) {
 	}
 }
 
-func TestClientRequestJobEmpty(t *testing.T) {
+func TestClientWithAPIKey(t *testing.T) {
+	const wantKey = "worker-secret"
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		auth := r.Header.Get("Authorization")
+		if auth != "Bearer "+wantKey {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"job": nil})
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 	}))
 	defer srv.Close()
 
-	client := NewClient(srv.URL)
-	job, err := client.RequestJob(context.Background(), "worker-1")
-	if err != nil {
+	client := NewClientWithAPIKey(srv.URL, wantKey)
+	if err := client.Heartbeat(context.Background(), "worker-1"); err != nil {
 		t.Fatal(err)
-	}
-	if job != nil {
-		t.Fatalf("job = %+v, want nil", job)
 	}
 }
 
-func TestClientRequestJobServerError(t *testing.T) {
+func TestClientClaimJob(t *testing.T) {
+	wantJob := &types.Job{ID: "job-1", Status: types.JobStatusRunning, Attempt: 1, LeaseGeneration: 1}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		if r.URL.Path != "/workers/claim-job" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"job": wantJob})
 	}))
 	defer srv.Close()
 
 	client := NewClient(srv.URL)
-	_, err := client.RequestJob(context.Background(), "worker-1")
+	job, err := client.ClaimJob(context.Background(), "worker-1", "job-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.ID != wantJob.ID || job.Status != wantJob.Status {
+		t.Fatalf("job = %+v, want %+v", job, wantJob)
+	}
+}
+
+func TestClientClaimJobConflict(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "conflict", http.StatusConflict)
+	}))
+	defer srv.Close()
+
+	client := NewClient(srv.URL)
+	_, err := client.ClaimJob(context.Background(), "worker-1", "job-1")
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -90,10 +114,10 @@ func TestClientSubmitJobResult(t *testing.T) {
 
 	client := NewClient(srv.URL)
 	logs := []types.JobLogEntry{{Stream: "stdout", Line: "done"}}
-	if err := client.SubmitJobResult(context.Background(), "w1", "j1", true, logs); err != nil {
+	if err := client.SubmitJobResult(context.Background(), "w1", "j1", 1, true, logs); err != nil {
 		t.Fatal(err)
 	}
-	if payload["worker_id"] != "w1" || payload["job_id"] != "j1" || payload["success"] != true {
+	if payload["worker_id"] != "w1" || payload["job_id"] != "j1" || payload["success"] != true || payload["lease_generation"] != float64(1) {
 		t.Fatalf("unexpected payload: %+v", payload)
 	}
 }

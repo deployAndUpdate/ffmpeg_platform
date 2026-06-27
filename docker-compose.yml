@@ -13,8 +13,6 @@ services:
       - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./db/migrations/001_init.sql:/docker-entrypoint-initdb.d/001_init.sql:ro
-      - ./db/migrations/002_storage.sql:/docker-entrypoint-initdb.d/002_storage.sql:ro
       - ./docker/postgres/postgresql.conf:/etc/postgresql/postgresql.conf:ro
     command: ["postgres", "-c", "config_file=/etc/postgresql/postgresql.conf"]
     healthcheck:
@@ -26,6 +24,35 @@ services:
     networks:
       - backend
 
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    restart: unless-stopped
+    ports:
+      - "${RABBITMQ_PORT:-5672}:5672"
+      - "${RABBITMQ_MGMT_PORT:-15672}:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    networks:
+      - backend
+
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: migrate
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DB_DSN: postgres://${POSTGRES_USER:-video}:${POSTGRES_PASSWORD:-video}@postgres:5432/${POSTGRES_DB:-video}?sslmode=disable
+    networks:
+      - backend
+
   scheduler:
     build:
       context: .
@@ -33,11 +60,18 @@ services:
       target: scheduler
     restart: unless-stopped
     depends_on:
+      migrate:
+        condition: service_completed_successfully
       postgres:
+        condition: service_healthy
+      rabbitmq:
         condition: service_healthy
     environment:
       DB_DSN: postgres://${POSTGRES_USER:-video}:${POSTGRES_PASSWORD:-video}@postgres:5432/${POSTGRES_DB:-video}?sslmode=disable
+      RABBITMQ_URL: amqp://${RABBITMQ_USER:-guest}:${RABBITMQ_PASSWORD:-guest}@rabbitmq:5672/
       SCHEDULER_ADDR: :8080
+      MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-536870912}
+      SCHEDULER_UPLOAD_TIMEOUT: ${SCHEDULER_UPLOAD_TIMEOUT:-30m}
       R2_ACCESS_KEY_ID: ${R2_ACCESS_KEY_ID:-}
       R2_SECRET_ACCESS_KEY: ${R2_SECRET_ACCESS_KEY:-}
       R2_BUCKET: ${R2_BUCKET:-}
@@ -45,14 +79,18 @@ services:
       R2_REGION: ${R2_REGION:-auto}
       R2_PRESIGN_UPLOAD_TTL: ${R2_PRESIGN_UPLOAD_TTL:-1h}
       R2_PRESIGN_DOWNLOAD_TTL: ${R2_PRESIGN_DOWNLOAD_TTL:-1h}
+      SCHEDULER_API_KEY_REQUIRED: ${SCHEDULER_API_KEY_REQUIRED:-false}
+      SCHEDULER_CLIENT_API_KEY: ${SCHEDULER_CLIENT_API_KEY:-}
+      SCHEDULER_WORKER_API_KEY: ${SCHEDULER_WORKER_API_KEY:-}
+      SCHEDULER_ADMIN_API_KEY: ${SCHEDULER_ADMIN_API_KEY:-}
     ports:
       - "${SCHEDULER_PORT:-8080}:8080"
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/health"]
-      interval: 10s
-      timeout: 3s
-      retries: 5
-      start_period: 5s
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
     networks:
       - backend
 
@@ -65,8 +103,12 @@ services:
     depends_on:
       scheduler:
         condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
     environment:
       SCHEDULER_URL: http://scheduler:8080
+      RABBITMQ_URL: amqp://${RABBITMQ_USER:-guest}:${RABBITMQ_PASSWORD:-guest}@rabbitmq:5672/
+      SCHEDULER_WORKER_API_KEY: ${SCHEDULER_WORKER_API_KEY:-}
       WORKER_MAX_PARALLEL_JOBS: ${WORKER_MAX_PARALLEL_JOBS:-1}
       WORKER_GPU_AVAILABLE: ${WORKER_GPU_AVAILABLE:-false}
       WORKER_TEMP_DIR: ${WORKER_TEMP_DIR:-/tmp/jobs}

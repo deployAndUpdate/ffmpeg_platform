@@ -1,6 +1,6 @@
 # Distributed Video Compression Platform (Go)
 
-Fault-tolerant scheduler and workers for running `ffmpeg` across multiple nodes. No UI — only an HTTP API (scheduler) and CLI workers.
+Fault-tolerant scheduler and workers for running `ffmpeg` across multiple nodes. HTTP API (scheduler), RabbitMQ dispatch (transactional outbox), CLI workers, embedded docs, and an admin dashboard for monitoring.
 
 ## Quick start
 
@@ -11,76 +11,74 @@ cp .env.example .env
 docker compose up --build -d
 ```
 
-Documentation: [http://localhost:8080/docs/](http://localhost:8080/docs/) (EN / UA / RU)
+After startup:
+
+- Documentation: [http://localhost:8080/docs/](http://localhost:8080/docs/) (EN / UA / RU)
+- Admin dashboard: [http://localhost:8080/admin/](http://localhost:8080/admin/)
+
+Optional: generate API keys with `./scripts/gen-api-keys.sh --format=env` and add them to `.env` (`SCHEDULER_API_KEY_REQUIRED=true` in production).
+
+Scale workers:
+
+```bash
+docker compose up -d --scale worker=3
+```
 
 **Local (without containers):**
 
-1. Start PostgreSQL and apply the migration: `psql "$DB_DSN" -f db/migrations/001_init.sql`
-2. Start the scheduler: `export DB_DSN=...; export SCHEDULER_ADDR=:8080; go run ./cmd/scheduler`
-3. Start a worker (machine with ffmpeg and file access): `export SCHEDULER_URL=http://localhost:8080; go run ./cmd/worker`
+1. Start PostgreSQL, RabbitMQ, and apply migrations: `export DB_DSN=...; make migrate-up`
+2. Start the scheduler: `export DB_DSN=...; export RABBITMQ_URL=amqp://guest:guest@localhost:5672/; export SCHEDULER_ADDR=:8080; go run ./cmd/scheduler`
+3. Start a worker: `export SCHEDULER_URL=http://localhost:8080; export RABBITMQ_URL=amqp://guest:guest@localhost:5672/; go run ./cmd/worker`
+
+For Cloudflare R2 object storage, set `R2_*` env vars on scheduler and workers (see `.env.example`).
 
 ## Architecture
 
-- **Scheduler** (`cmd/scheduler`) — HTTP API: create jobs, register workers, heartbeats, dispatch jobs (`SELECT … FOR UPDATE SKIP LOCKED` + lease), finalize results.
-- **Workers** (`cmd/worker`) — register, send heartbeats, poll for jobs, run ffmpeg, upload logs and results.
-- **PostgreSQL** — single source of truth: `jobs`, `workers`, `job_logs`, lease TTL.
+- **Scheduler** (`cmd/scheduler`) — HTTP API, transactional outbox → RabbitMQ relay, background reaper for stale workers and expired leases.
+- **Workers** (`cmd/worker`) — AMQP consumer, claim job via HTTP, renew leases during ffmpeg, submit results.
+- **RabbitMQ** — dispatch transport (`jobs.main`, retry queue, DLQ).
+- **PostgreSQL** — source of truth: `jobs`, `job_outbox`, `workers`, `job_log_artifacts`, lease TTL and `lease_generation`. Job log bodies are stored in R2.
+- **R2 (optional)** — S3-compatible object storage for upload/download via presigned URLs.
 
 ## Job lifecycle
 
 ```
-QUEUED → RUNNING → COMPLETED
-              ↓
-           FAILED → RETRY (if attempt < max_attempts)
+NEW → DISPATCHED → RUNNING → COMPLETED
+  ↑        ↑           ↓
+  R2 only  outbox retry  FAILED (attempt ≥ max_attempts)
 ```
 
-Invariants: a job is `RUNNING` on at most one worker; `COMPLETED` is final; `FAILED` may transition to `RETRY` while attempts remain.
+- Local jobs via `POST /jobs` (JSON) → `DISPATCHED` + outbox → RabbitMQ.
+- R2 jobs via `POST /jobs/init` start as `NEW` and move to `DISPATCHED` after `POST /jobs/{id}/submit`.
+- Reaper returns orphan `RUNNING` jobs to `DISPATCHED` + outbox retry or `FAILED`.
 
 ## HTTP API (summary)
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/health` | Health check |
-| POST | `/jobs` | Create a job |
-| GET | `/jobs/{id}` | Job status |
-| GET | `/jobs/{id}/logs` | stdout/stderr logs |
-| POST | `/workers/register` | Register or update a worker |
-| POST | `/workers/heartbeat` | Worker heartbeat |
-| POST | `/workers/request-job` | Acquire next job (SKIP LOCKED + lease) |
-| POST | `/workers/job-result` | Finalize job, store result and logs |
-| GET | `/docs/` | This documentation (embedded HTML) |
+| GET | `/health` | Liveness probe |
+| GET | `/ready` | Readiness (PostgreSQL + RabbitMQ + R2 if configured) |
+| POST | `/jobs` | Create job (JSON local or multipart R2) |
+| POST | `/workers/claim-job` | Claim job by `job_id` (after AMQP delivery) |
+| POST | `/workers/job-result` | Finalize job |
 
-Full request/response examples, env vars, Docker setup, and tests: see **[/docs/](http://localhost:8080/docs/)**.
-
-## Trade-offs
-
-- **At-least-once** instead of exactly-once — duplicate ffmpeg runs are possible on failure or lease expiry.
-- **Postgres queue** — no external broker; simpler MVP, limited throughput.
-- **Logs in DB** — consistent and simple, heavier for large streams.
-- **Resource model** — `max_parallel_jobs` today; CPU/GPU filters can be extended later.
+Full API: see **[/docs/](http://localhost:8080/docs/)**.
 
 ## Tests
 
 ```bash
-make test              # unit tests (no PostgreSQL)
-make test-integration  # integration tests (docker-compose.test.yml, port 5433)
-make ci                # full local CI suite
+make test              # unit tests
+make test-integration  # PostgreSQL + RabbitMQ (docker-compose.test.yml)
+make test-all
+make ci
 ```
-
-## Known limitations
-
-- No background reaper for dead workers and expired leases
-- No standalone migration tool (Docker applies init SQL on first postgres start)
-- GPU/CPU filters are not used when dispatching jobs
 
 ## Project layout
 
 ```
-cmd/scheduler/   HTTP API server
-cmd/worker/      ffmpeg worker
-internal/api/    HTTP handlers
-internal/store/  PostgreSQL layer
-internal/worker/ worker client and loop
-internal/ffmpeg/ ffmpeg wrapper
-web/docs/        embedded HTML documentation
-db/migrations/   SQL schema
+internal/queue/     RabbitMQ publisher/consumer
+internal/outbox/    Transactional outbox relay
+internal/store/     PostgreSQL + outbox + claim
+cmd/scheduler/      HTTP API + relay + reaper
+cmd/worker/         AMQP consumer + ffmpeg
 ```

@@ -65,6 +65,17 @@ func (r *R2) Bucket() string {
 	return r.bucket
 }
 
+// HealthCheck verifies R2 bucket access (HeadBucket).
+func (r *R2) HealthCheck(ctx context.Context) error {
+	_, err := r.client.HeadBucket(ctx, &s3.HeadBucketInput{
+		Bucket: aws.String(r.bucket),
+	})
+	if err != nil {
+		return fmt.Errorf("head bucket %q: %w", r.bucket, err)
+	}
+	return nil
+}
+
 func (r *R2) InputObjectKey(jobID, ext string) string {
 	return InputObjectKey(jobID, ext)
 }
@@ -102,28 +113,51 @@ func (r *R2) PresignGet(ctx context.Context, key string, expiry time.Duration) (
 }
 
 func (r *R2) Exists(ctx context.Context, key string) (bool, error) {
-	_, err := r.client.HeadObject(ctx, &s3.HeadObjectInput{
+	stat, err := r.StatObject(ctx, key)
+	if err != nil {
+		if isNotFound(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	return stat.Size > 0, nil
+}
+
+func (r *R2) StatObject(ctx context.Context, key string) (ObjectStat, error) {
+	out, err := r.client.HeadObject(ctx, &s3.HeadObjectInput{
 		Bucket: aws.String(r.bucket),
 		Key:    aws.String(key),
 	})
 	if err != nil {
 		if isNotFound(err) {
-			return false, nil
+			return ObjectStat{}, fmt.Errorf("not found: %w", err)
 		}
-		return false, fmt.Errorf("head object %q: %w", key, err)
+		return ObjectStat{}, fmt.Errorf("head object %q: %w", key, err)
 	}
-	return true, nil
+	size := int64(0)
+	if out.ContentLength != nil {
+		size = *out.ContentLength
+	}
+	return ObjectStat{Size: size}, nil
 }
 
-func (r *R2) Download(ctx context.Context, key, localPath string) error {
+func (r *R2) OpenObject(ctx context.Context, key string) (io.ReadCloser, error) {
 	out, err := r.client.GetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(r.bucket),
 		Key:    aws.String(key),
 	})
 	if err != nil {
-		return fmt.Errorf("get object %q: %w", key, err)
+		return nil, fmt.Errorf("get object %q: %w", key, err)
 	}
-	defer out.Body.Close()
+	return out.Body, nil
+}
+
+func (r *R2) Download(ctx context.Context, key, localPath string) error {
+	body, err := r.OpenObject(ctx, key)
+	if err != nil {
+		return err
+	}
+	defer body.Close()
 
 	if err := os.MkdirAll(filepath.Dir(localPath), 0o755); err != nil {
 		return fmt.Errorf("create download dir: %w", err)
@@ -135,7 +169,7 @@ func (r *R2) Download(ctx context.Context, key, localPath string) error {
 	}
 	defer f.Close()
 
-	if _, err := io.Copy(f, out.Body); err != nil {
+	if _, err := io.Copy(f, body); err != nil {
 		return fmt.Errorf("write local file: %w", err)
 	}
 	return nil
@@ -148,11 +182,27 @@ func (r *R2) Upload(ctx context.Context, localPath, key string) error {
 	}
 	defer f.Close()
 
-	_, err = r.client.PutObject(ctx, &s3.PutObjectInput{
+	info, err := f.Stat()
+	if err != nil {
+		return fmt.Errorf("stat local file: %w", err)
+	}
+	return r.UploadReader(ctx, key, f, info.Size(), "")
+}
+
+func (r *R2) UploadReader(ctx context.Context, key string, body io.Reader, size int64, contentType string) error {
+	input := &s3.PutObjectInput{
 		Bucket: aws.String(r.bucket),
 		Key:    aws.String(key),
-		Body:   f,
-	})
+		Body:   body,
+	}
+	if size > 0 {
+		input.ContentLength = aws.Int64(size)
+	}
+	if contentType != "" {
+		input.ContentType = aws.String(contentType)
+	}
+
+	_, err := r.client.PutObject(ctx, input)
 	if err != nil {
 		return fmt.Errorf("put object %q: %w", key, err)
 	}

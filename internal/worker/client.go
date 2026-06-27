@@ -16,13 +16,20 @@ import (
 // Client talks to the scheduler HTTP API.
 type Client struct {
 	baseURL    string
+	apiKey     string
 	httpClient *http.Client
 }
 
-// NewClient creates a scheduler API client.
+// NewClient creates a scheduler API client without authentication.
 func NewClient(baseURL string) *Client {
+	return NewClientWithAPIKey(baseURL, "")
+}
+
+// NewClientWithAPIKey creates a scheduler API client that sends a worker API key.
+func NewClientWithAPIKey(baseURL, apiKey string) *Client {
 	return &Client{
 		baseURL: strings.TrimRight(baseURL, "/"),
+		apiKey:  apiKey,
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
@@ -39,23 +46,42 @@ func (c *Client) Heartbeat(ctx context.Context, workerID string) error {
 	return c.post(ctx, "/workers/heartbeat", body, &out)
 }
 
-func (c *Client) RequestJob(ctx context.Context, workerID string) (*types.Job, error) {
-	body := map[string]string{"worker_id": workerID}
+func (c *Client) ClaimJob(ctx context.Context, workerID, jobID string) (*types.Job, error) {
+	body := map[string]string{
+		"worker_id": workerID,
+		"job_id":    jobID,
+	}
 	var resp struct {
 		Job *types.Job `json:"job"`
 	}
-	if err := c.post(ctx, "/workers/request-job", body, &resp); err != nil {
+	if err := c.post(ctx, "/workers/claim-job", body, &resp); err != nil {
 		return nil, err
+	}
+	if resp.Job == nil {
+		return nil, fmt.Errorf("claim job: empty job in response")
 	}
 	return resp.Job, nil
 }
 
-func (c *Client) SubmitJobResult(ctx context.Context, workerID, jobID string, success bool, logs []types.JobLogEntry) error {
+func (c *Client) RenewLease(ctx context.Context, workerID, jobID string, leaseGeneration int64) error {
 	body := map[string]any{
-		"worker_id": workerID,
-		"job_id":    jobID,
-		"success":   success,
-		"logs":      logs,
+		"worker_id":        workerID,
+		"job_id":           jobID,
+		"lease_generation": leaseGeneration,
+	}
+	var resp struct {
+		Job *types.Job `json:"job"`
+	}
+	return c.post(ctx, "/workers/renew-lease", body, &resp)
+}
+
+func (c *Client) SubmitJobResult(ctx context.Context, workerID, jobID string, leaseGeneration int64, success bool, logs []types.JobLogEntry) error {
+	body := map[string]any{
+		"worker_id":        workerID,
+		"job_id":           jobID,
+		"lease_generation": leaseGeneration,
+		"success":          success,
+		"logs":             logs,
 	}
 	var out map[string]string
 	return c.post(ctx, "/workers/job-result", body, &out)
@@ -72,6 +98,9 @@ func (c *Client) post(ctx context.Context, path string, reqBody, respBody any) e
 		return fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if c.apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {

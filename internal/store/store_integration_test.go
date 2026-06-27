@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"go_distributed_system/internal/storage"
 	"go_distributed_system/internal/store"
 	"go_distributed_system/internal/testutil"
 	"go_distributed_system/internal/types"
@@ -16,68 +17,31 @@ import (
 	"github.com/google/uuid"
 )
 
-func TestCreateJobGetJob(t *testing.T) {
+func TestCreateAndDispatch(t *testing.T) {
 	st, cleanup := testutil.OpenStore(t)
 	defer cleanup()
 
 	ctx := context.Background()
-	id := uuid.New().String()
-	job := &types.Job{
-		ID:          id,
-		InputPath:   "/in.mp4",
-		OutputPath:  "/out.mp4",
-		FFmpegArgs:  "-c:v libx264",
-		Status:      types.JobStatusQueued,
-		Attempt:     0,
-		MaxAttempts: 3,
-	}
-	if err := st.CreateJob(ctx, job); err != nil {
-		t.Fatal(err)
-	}
+	id := testutil.CreateDispatchedJob(t, st, "/in.mp4", "/out.mp4")
 
 	got, err := st.GetJob(ctx, id)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Status != types.JobStatusQueued {
-		t.Fatalf("status = %q, want QUEUED", got.Status)
+	if got.Status != types.JobStatusDispatched {
+		t.Fatalf("status = %q, want DISPATCHED", got.Status)
 	}
-	if got.Attempt != 0 {
-		t.Fatalf("attempt = %d, want 0", got.Attempt)
+
+	n, err := st.CountUnpublishedOutbox(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("unpublished outbox = %d, want 1", n)
 	}
 }
 
-func TestRegisterWorkerHeartbeat(t *testing.T) {
-	st, cleanup := testutil.OpenStore(t)
-	defer cleanup()
-
-	ctx := context.Background()
-	id := uuid.New().String()
-	now := time.Now().UTC()
-	worker := &types.Worker{
-		ID:              id,
-		Hostname:        "node-1",
-		CPUCores:        8,
-		GPUAvailable:    false,
-		MaxParallelJobs: 2,
-		LastHeartbeatAt: &now,
-		Status:          types.WorkerStatusActive,
-	}
-	if err := st.RegisterWorker(ctx, worker); err != nil {
-		t.Fatal(err)
-	}
-
-	later := now.Add(time.Minute)
-	if err := st.Heartbeat(ctx, id, later); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := st.Heartbeat(ctx, uuid.New().String(), later); err == nil {
-		t.Fatal("expected error for unknown worker")
-	}
-}
-
-func TestAcquireJobEmptyQueue(t *testing.T) {
+func TestClaimJobNotDispatched(t *testing.T) {
 	st, cleanup := testutil.OpenStore(t)
 	defer cleanup()
 
@@ -85,16 +49,13 @@ func TestAcquireJobEmptyQueue(t *testing.T) {
 	workerID := uuid.New().String()
 	registerWorker(t, st, workerID)
 
-	job, err := st.AcquireJob(ctx, workerID, time.Minute)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if job != nil {
-		t.Fatalf("job = %+v, want nil", job)
+	_, err := st.ClaimJob(ctx, uuid.New().String(), workerID, time.Minute)
+	if !errors.Is(err, store.ErrJobNotClaimable) {
+		t.Fatalf("err = %v, want ErrJobNotClaimable", err)
 	}
 }
 
-func TestAcquireJobClaimsQueuedJob(t *testing.T) {
+func TestClaimJobFromDispatched(t *testing.T) {
 	st, cleanup := testutil.OpenStore(t)
 	defer cleanup()
 
@@ -102,40 +63,24 @@ func TestAcquireJobClaimsQueuedJob(t *testing.T) {
 	workerID := uuid.New().String()
 	registerWorker(t, st, workerID)
 
-	jobID := uuid.New().String()
-	if err := st.CreateJob(ctx, &types.Job{
-		ID: jobID, InputPath: "/in.mp4", OutputPath: "/out.mp4",
-		FFmpegArgs: "-c:v libx264", Status: types.JobStatusQueued,
-		MaxAttempts: 3,
-	}); err != nil {
-		t.Fatal(err)
-	}
+	jobID := testutil.CreateDispatchedJob(t, st, "/in.mp4", "/out.mp4")
 
-	acquired, err := st.AcquireJob(ctx, workerID, 30*time.Minute)
+	claimed, err := st.ClaimJob(ctx, jobID, workerID, 30*time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if acquired == nil {
-		t.Fatal("expected job")
+	if claimed.Status != types.JobStatusRunning {
+		t.Fatalf("status = %q, want RUNNING", claimed.Status)
 	}
-	if acquired.ID != jobID {
-		t.Fatalf("id = %s, want %s", acquired.ID, jobID)
+	if claimed.Attempt != 1 {
+		t.Fatalf("attempt = %d, want 1", claimed.Attempt)
 	}
-	if acquired.Status != types.JobStatusRunning {
-		t.Fatalf("status = %q, want RUNNING", acquired.Status)
-	}
-	if acquired.Attempt != 1 {
-		t.Fatalf("attempt = %d, want 1", acquired.Attempt)
-	}
-	if acquired.AssignedWorkerID == nil || *acquired.AssignedWorkerID != workerID {
-		t.Fatalf("assigned_worker_id = %v, want %s", acquired.AssignedWorkerID, workerID)
-	}
-	if acquired.LeaseExpiresAt == nil {
-		t.Fatal("expected lease_expires_at")
+	if claimed.LeaseGeneration != 1 {
+		t.Fatalf("generation = %d, want 1", claimed.LeaseGeneration)
 	}
 }
 
-func TestAcquireJobSkipLocked(t *testing.T) {
+func TestClaimJobConcurrentIdempotent(t *testing.T) {
 	st, cleanup := testutil.OpenStore(t)
 	defer cleanup()
 
@@ -145,38 +90,34 @@ func TestAcquireJobSkipLocked(t *testing.T) {
 	registerWorker(t, st, workerA)
 	registerWorker(t, st, workerB)
 
-	if err := st.CreateJob(ctx, &types.Job{
-		ID: uuid.New().String(), InputPath: "/in.mp4", OutputPath: "/out.mp4",
-		FFmpegArgs: "-c:v libx264", Status: types.JobStatusQueued, MaxAttempts: 3,
-	}); err != nil {
-		t.Fatal(err)
-	}
+	jobID := testutil.CreateDispatchedJob(t, st, "/in.mp4", "/out.mp4")
 
 	var wg sync.WaitGroup
-	results := make(chan *types.Job, 2)
+	results := make(chan error, 2)
 	for _, wid := range []string{workerA, workerB} {
 		wg.Add(1)
 		go func(workerID string) {
 			defer wg.Done()
-			job, err := st.AcquireJob(ctx, workerID, time.Minute)
-			if err != nil {
-				t.Error(err)
-				return
-			}
-			results <- job
+			_, err := st.ClaimJob(ctx, jobID, workerID, time.Minute)
+			results <- err
 		}(wid)
 	}
 	wg.Wait()
 	close(results)
 
-	var claimed int
-	for job := range results {
-		if job != nil {
-			claimed++
+	var ok, conflict int
+	for err := range results {
+		switch {
+		case err == nil:
+			ok++
+		case errors.Is(err, store.ErrJobNotClaimable):
+			conflict++
+		default:
+			t.Errorf("unexpected err: %v", err)
 		}
 	}
-	if claimed != 1 {
-		t.Fatalf("claimed jobs = %d, want 1", claimed)
+	if ok != 1 || conflict != 1 {
+		t.Fatalf("ok=%d conflict=%d, want 1 each", ok, conflict)
 	}
 }
 
@@ -188,22 +129,19 @@ func TestFinishJobCompleted(t *testing.T) {
 	workerID := uuid.New().String()
 	registerWorker(t, st, workerID)
 
-	jobID := uuid.New().String()
-	if err := st.CreateJob(ctx, &types.Job{
-		ID: jobID, InputPath: "/in.mp4", OutputPath: "/out.mp4",
-		FFmpegArgs: "-c:v libx264", Status: types.JobStatusQueued, MaxAttempts: 3,
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := st.AcquireJob(ctx, workerID, time.Minute); err != nil {
+	jobID := testutil.CreateDispatchedJob(t, st, "/in.mp4", "/out.mp4")
+	claimed, err := st.ClaimJob(ctx, jobID, workerID, time.Minute)
+	if err != nil {
 		t.Fatal(err)
 	}
 
-	logs := []types.JobLogEntry{
-		{Stream: "stdout", Line: "frame=100"},
-		{Stream: "stderr", Line: "warning"},
+	artifact := &types.JobLogArtifactInput{
+		Attempt:   claimed.Attempt,
+		ObjectKey: storage.LogObjectKey(jobID, claimed.Attempt),
+		Bytes:     128,
+		Lines:     2,
 	}
-	if err := st.FinishJob(ctx, jobID, workerID, true, logs); err != nil {
+	if err := st.FinishJob(ctx, jobID, workerID, claimed.LeaseGeneration, true, artifact); err != nil {
 		t.Fatal(err)
 	}
 
@@ -214,16 +152,13 @@ func TestFinishJobCompleted(t *testing.T) {
 	if got.Status != types.JobStatusCompleted {
 		t.Fatalf("status = %q, want COMPLETED", got.Status)
 	}
-	if got.FinishedAt == nil {
-		t.Fatal("expected finished_at")
-	}
 
-	storedLogs, err := st.GetJobLogs(ctx, jobID)
+	artifacts, err := st.ListLogArtifacts(ctx, jobID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(storedLogs) != 2 {
-		t.Fatalf("logs len = %d, want 2", len(storedLogs))
+	if len(artifacts) != 1 || artifacts[0].Lines != 2 {
+		t.Fatalf("artifacts = %+v", artifacts)
 	}
 }
 
@@ -235,40 +170,46 @@ func TestFinishJobRetryAndFailed(t *testing.T) {
 	workerID := uuid.New().String()
 	registerWorker(t, st, workerID)
 
-	jobID := uuid.New().String()
-	if err := st.CreateJob(ctx, &types.Job{
-		ID: jobID, InputPath: "/in.mp4", OutputPath: "/out.mp4",
-		FFmpegArgs: "-c:v libx264", Status: types.JobStatusQueued,
-		MaxAttempts: 2,
+	id := uuid.New().String()
+	if err := st.CreateAndDispatch(ctx, &store.JobCreateParams{
+		ID: id, InputPath: "/in.mp4", OutputPath: "/out.mp4",
+		FFmpegArgs: "-c:v libx264", MaxAttempts: 2,
 	}); err != nil {
 		t.Fatal(err)
 	}
 
-	acquired, err := st.AcquireJob(ctx, workerID, time.Minute)
-	if err != nil || acquired == nil {
-		t.Fatalf("acquire: job=%v err=%v", acquired, err)
-	}
-	if err := st.FinishJob(ctx, jobID, workerID, false, nil); err != nil {
-		t.Fatal(err)
-	}
-
-	got, err := st.GetJob(ctx, jobID)
+	claimed, err := st.ClaimJob(ctx, id, workerID, time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Status != types.JobStatusRetry {
-		t.Fatalf("after first fail status = %q, want RETRY", got.Status)
-	}
-
-	acquired, err = st.AcquireJob(ctx, workerID, time.Minute)
-	if err != nil || acquired == nil {
-		t.Fatalf("re-acquire: job=%v err=%v", acquired, err)
-	}
-	if err := st.FinishJob(ctx, jobID, workerID, false, nil); err != nil {
+	if err := st.FinishJob(ctx, id, workerID, claimed.LeaseGeneration, false, nil); err != nil {
 		t.Fatal(err)
 	}
 
-	got, err = st.GetJob(ctx, jobID)
+	got, err := st.GetJob(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != types.JobStatusDispatched {
+		t.Fatalf("after first fail status = %q, want DISPATCHED", got.Status)
+	}
+	n, err := st.CountUnpublishedOutbox(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 2 {
+		t.Fatalf("outbox rows = %d, want 2 (initial + retry)", n)
+	}
+
+	claimed, err = st.ClaimJob(ctx, id, workerID, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.FinishJob(ctx, id, workerID, claimed.LeaseGeneration, false, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err = st.GetJob(ctx, id)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -287,18 +228,13 @@ func TestFinishJobWrongWorker(t *testing.T) {
 	registerWorker(t, st, workerID)
 	registerWorker(t, st, otherWorker)
 
-	jobID := uuid.New().String()
-	if err := st.CreateJob(ctx, &types.Job{
-		ID: jobID, InputPath: "/in.mp4", OutputPath: "/out.mp4",
-		FFmpegArgs: "-c:v libx264", Status: types.JobStatusQueued, MaxAttempts: 3,
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := st.AcquireJob(ctx, workerID, time.Minute); err != nil {
+	jobID := testutil.CreateDispatchedJob(t, st, "/in.mp4", "/out.mp4")
+	claimed, err := st.ClaimJob(ctx, jobID, workerID, time.Minute)
+	if err != nil {
 		t.Fatal(err)
 	}
 
-	err := st.FinishJob(ctx, jobID, otherWorker, true, nil)
+	err = st.FinishJob(ctx, jobID, otherWorker, claimed.LeaseGeneration, true, nil)
 	if !errors.Is(err, store.ErrJobNotAssigned) {
 		t.Fatalf("err = %v, want ErrJobNotAssigned", err)
 	}

@@ -16,12 +16,11 @@ const (
 type JobStatus string
 
 const (
-	JobStatusNew       JobStatus = "NEW"
-	JobStatusQueued    JobStatus = "QUEUED"
-	JobStatusRunning   JobStatus = "RUNNING"
-	JobStatusCompleted JobStatus = "COMPLETED"
-	JobStatusFailed    JobStatus = "FAILED"
-	JobStatusRetry     JobStatus = "RETRY"
+	JobStatusNew        JobStatus = "NEW"
+	JobStatusDispatched JobStatus = "DISPATCHED"
+	JobStatusRunning    JobStatus = "RUNNING"
+	JobStatusCompleted  JobStatus = "COMPLETED"
+	JobStatusFailed     JobStatus = "FAILED"
 )
 
 // WorkerStatus denotes worker availability.
@@ -37,13 +36,17 @@ type Job struct {
 	ID               string      `json:"id"`
 	InputPath        string      `json:"input_path"`
 	OutputPath       string      `json:"output_path"`
+	Preset           string      `json:"preset,omitempty"`
 	FFmpegArgs       string      `json:"ffmpeg_args"`
 	Storage          StorageMode `json:"storage"`
 	Status           JobStatus   `json:"status"`
 	AssignedWorkerID *string    `json:"assigned_worker_id,omitempty"`
-	Attempt          int        `json:"attempt"`
-	MaxAttempts      int        `json:"max_attempts"`
-	LeaseExpiresAt   *time.Time `json:"lease_expires_at,omitempty"`
+	Attempt            int        `json:"attempt"`
+	MaxAttempts        int        `json:"max_attempts"`
+	LeaseExpiresAt     *time.Time `json:"lease_expires_at,omitempty"`
+	LeaseGeneration    int64      `json:"lease_generation"`
+	IdempotencyKey     string     `json:"idempotency_key,omitempty"`
+	MaxDurationSeconds int        `json:"max_duration_seconds,omitempty"`
 	CreatedAt        time.Time  `json:"created_at"`
 	StartedAt        *time.Time `json:"started_at,omitempty"`
 	FinishedAt       *time.Time `json:"finished_at,omitempty"`
@@ -75,4 +78,29 @@ type JobLog struct {
 	TS     time.Time `json:"ts"`
 	Stream string    `json:"stream"`
 	Line   string    `json:"line"`
+}
+
+// JobLogArtifact describes an R2 object holding logs for one job attempt.
+type JobLogArtifact struct {
+	ID        int64     `json:"id"`
+	JobID     string    `json:"job_id"`
+	Attempt   int       `json:"attempt"`
+	ObjectKey string    `json:"object_key"`
+	Bytes     int64     `json:"bytes"`
+	Lines     int       `json:"lines"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// JobLogArtifactInput is metadata recorded after logs are uploaded to object storage.
+type JobLogArtifactInput struct {
+	Attempt   int
+	ObjectKey string
+	Bytes     int64
+	Lines     int
+}
+
+// WorkerStats extends Worker with live workload counters for the admin dashboard.
+type WorkerStats struct {
+	Worker
+	RunningJobs int `json:"running_jobs"`
 }

@@ -11,9 +11,13 @@ import (
 	"strings"
 	"time"
 
+	"go_distributed_system/internal/api/auth"
+	"go_distributed_system/internal/joblogs"
+	"go_distributed_system/internal/queue"
 	"go_distributed_system/internal/store"
 	"go_distributed_system/internal/storage"
 	"go_distributed_system/internal/types"
+	webadmin "go_distributed_system/web/admin"
 	webdocs "go_distributed_system/web/docs"
 
 	"github.com/google/uuid"
@@ -21,10 +25,14 @@ import (
 
 // Server bundles HTTP handlers for the scheduler.
 type Server struct {
-	store         JobStore
-	storage       storage.ObjectStorage
-	storageConfig storage.Config
-	mux           *http.ServeMux
+	store           JobStore
+	storage         storage.ObjectStorage
+	storageConfig   storage.Config
+	maxUploadBytes  int64
+	uploadTimeout   time.Duration
+	auth            auth.Config
+	rabbit          queue.Publisher
+	mux             *http.ServeMux
 }
 
 // NewServer wires routes and dependencies (local-path jobs only).
@@ -34,11 +42,25 @@ func NewServer(st JobStore) *Server {
 
 // NewServerWithStorage enables R2 object-storage job flow when storage is non-nil.
 func NewServerWithStorage(st JobStore, obj storage.ObjectStorage, cfg storage.Config) *Server {
+	return NewServerWithStorageAndAuth(st, obj, cfg, auth.Config{})
+}
+
+// NewServerWithStorageAndAuth is like NewServerWithStorage with explicit API key auth config.
+func NewServerWithStorageAndAuth(st JobStore, obj storage.ObjectStorage, cfg storage.Config, authCfg auth.Config) *Server {
+	return NewServerWithStorageAuthAndRabbit(st, obj, cfg, authCfg, nil)
+}
+
+// NewServerWithStorageAuthAndRabbit adds optional RabbitMQ readiness checks.
+func NewServerWithStorageAuthAndRabbit(st JobStore, obj storage.ObjectStorage, cfg storage.Config, authCfg auth.Config, pub queue.Publisher) *Server {
 	s := &Server{
-		store:         st,
-		storage:       obj,
-		storageConfig: cfg,
-		mux:           http.NewServeMux(),
+		store:          st,
+		storage:        obj,
+		storageConfig:  cfg,
+		maxUploadBytes: MaxUploadBytesFromEnv(),
+		uploadTimeout:  UploadTimeoutFromEnv(),
+		auth:           authCfg,
+		rabbit:         pub,
+		mux:            http.NewServeMux(),
 	}
 	s.registerRoutes()
 	return s
@@ -46,21 +68,40 @@ func NewServerWithStorage(st JobStore, obj storage.ObjectStorage, cfg storage.Co
 
 // ServeHTTP allows Server to act as an http.Handler.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	s.mux.ServeHTTP(w, r)
+	auth.NewMiddleware(s.auth, s.mux).ServeHTTP(w, r)
 }
 
 func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/health", s.handleHealth)
+	s.mux.HandleFunc("/ready", s.handleReady)
+	s.mux.HandleFunc("/presets", s.handlePresets)
 	s.mux.HandleFunc("/jobs/init", s.handleJobsInit)
 	s.mux.HandleFunc("/jobs", s.handleJobs)
 	s.mux.HandleFunc("/jobs/", s.handleJobByID)
 
 	s.mux.HandleFunc("/workers/register", s.handleWorkerRegister)
 	s.mux.HandleFunc("/workers/heartbeat", s.handleWorkerHeartbeat)
-	s.mux.HandleFunc("/workers/request-job", s.handleWorkerRequestJob)
+	s.mux.HandleFunc("/workers/claim-job", s.handleWorkerClaimJob)
+	s.mux.HandleFunc("/workers/renew-lease", s.handleWorkerRenewLease)
 	s.mux.HandleFunc("/workers/job-result", s.handleWorkerJobResult)
 
+	s.mux.HandleFunc("/admin/api/", s.handleAdmin)
+
 	s.registerDocsRoutes()
+	s.registerAdminRoutes()
+}
+
+func (s *Server) registerAdminRoutes() {
+	sub, err := fs.Sub(webadmin.FS, ".")
+	if err != nil {
+		log.Printf("admin fs: %v", err)
+		return
+	}
+	fileServer := http.FileServer(http.FS(sub))
+	s.mux.Handle("/admin/", http.StripPrefix("/admin/", fileServer))
+	s.mux.HandleFunc("/admin", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/admin/", http.StatusMovedPermanently)
+	})
 }
 
 func (s *Server) registerDocsRoutes() {
@@ -80,10 +121,15 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
-// handleJobs covers POST /jobs.
+// handleJobs covers POST /jobs (JSON local paths or multipart upload to R2).
 func (s *Server) handleJobs(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodPost:
+		ct := r.Header.Get("Content-Type")
+		if strings.HasPrefix(ct, "multipart/form-data") {
+			s.createJobFromUpload(w, r)
+			return
+		}
 		s.createJob(w, r)
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -135,12 +181,20 @@ func (s *Server) handleWorkerHeartbeat(w http.ResponseWriter, r *http.Request) {
 	s.workerHeartbeat(w, r)
 }
 
-func (s *Server) handleWorkerRequestJob(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleWorkerClaimJob(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	s.workerRequestJob(w, r)
+	s.workerClaimJob(w, r)
+}
+
+func (s *Server) handleWorkerRenewLease(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	s.workerRenewLease(w, r)
 }
 
 func (s *Server) handleWorkerJobResult(w http.ResponseWriter, r *http.Request) {
@@ -160,41 +214,73 @@ func writeJSON(w http.ResponseWriter, status int, payload any) {
 }
 
 func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
+	if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
+		http.Error(w, "use multipart POST /jobs only when R2 is configured", http.StatusUnsupportedMediaType)
+		return
+	}
 	type req struct {
-		InputPath   string `json:"input_path"`
-		OutputPath  string `json:"output_path"`
-		FFmpegArgs  string `json:"ffmpeg_args"`
-		MaxAttempts int    `json:"max_attempts"`
+		InputPath          string `json:"input_path"`
+		OutputPath         string `json:"output_path"`
+		Preset             string `json:"preset"`
+		FFmpegArgs         string `json:"ffmpeg_args"`
+		MaxAttempts        int    `json:"max_attempts"`
+		MaxDurationSeconds int    `json:"max_duration_seconds"`
 	}
 	var body req
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "invalid json", http.StatusBadRequest)
 		return
 	}
-	if body.InputPath == "" || body.OutputPath == "" || body.FFmpegArgs == "" {
-		http.Error(w, "input_path, output_path, ffmpeg_args are required", http.StatusBadRequest)
+	if body.InputPath == "" || body.OutputPath == "" {
+		http.Error(w, "input_path and output_path are required", http.StatusBadRequest)
+		return
+	}
+	spec, err := resolveTranscodeSpec(body.Preset, body.FFmpegArgs, outputExtFromPath(body.OutputPath))
+	if err != nil {
+		status, msg := transcodeSpecHTTPError(err)
+		http.Error(w, msg, status)
 		return
 	}
 	if body.MaxAttempts <= 0 {
 		body.MaxAttempts = 3
 	}
 
-	id := uuid.New().String()
-	job := &types.Job{
-		ID:          id,
-		InputPath:   body.InputPath,
-		OutputPath:  body.OutputPath,
-		FFmpegArgs:  body.FFmpegArgs,
-		Storage:     types.StorageLocal,
-		Status:      types.JobStatusQueued,
-		Attempt:     0,
-		MaxAttempts: body.MaxAttempts,
-	}
-
+	idempotencyKey := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
-	if err := s.store.CreateJob(ctx, job); err != nil {
+	if idempotencyKey != "" {
+		existing, err := s.store.GetJobByIdempotencyKey(ctx, idempotencyKey)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			log.Printf("get job by idempotency key: %v", err)
+			http.Error(w, "failed to create job", http.StatusInternalServerError)
+			return
+		}
+		if existing != nil {
+			writeJSON(w, http.StatusOK, existing)
+			return
+		}
+	}
+
+	id := uuid.New().String()
+	if err := s.store.CreateAndDispatch(ctx, &store.JobCreateParams{
+		ID:                 id,
+		InputPath:          body.InputPath,
+		OutputPath:         body.OutputPath,
+		Preset:             spec.Preset,
+		FFmpegArgs:         spec.FFmpegArgs,
+		Storage:            types.StorageLocal,
+		Attempt:            0,
+		MaxAttempts:        body.MaxAttempts,
+		IdempotencyKey:     idempotencyKey,
+		MaxDurationSeconds: resolveMaxDurationSeconds(body.MaxDurationSeconds, spec.Preset),
+	}); err != nil {
 		log.Printf("create job: %v", err)
+		http.Error(w, "failed to create job", http.StatusInternalServerError)
+		return
+	}
+	job, err := s.store.GetJob(ctx, id)
+	if err != nil {
+		log.Printf("get job after create: %v", err)
 		http.Error(w, "failed to create job", http.StatusInternalServerError)
 		return
 	}
@@ -218,7 +304,12 @@ func (s *Server) getJob(w http.ResponseWriter, r *http.Request, id string) {
 }
 
 func (s *Server) getJobLogs(w http.ResponseWriter, r *http.Request, id string) {
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	if s.storage == nil {
+		http.Error(w, "object storage is not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
 	if _, err := s.store.GetJob(ctx, id); err != nil {
@@ -231,9 +322,16 @@ func (s *Server) getJobLogs(w http.ResponseWriter, r *http.Request, id string) {
 		return
 	}
 
-	logs, err := s.store.GetJobLogs(ctx, id)
+	artifacts, err := s.store.ListLogArtifacts(ctx, id)
 	if err != nil {
-		log.Printf("get job logs: %v", err)
+		log.Printf("list log artifacts: %v", err)
+		http.Error(w, "failed to get job logs", http.StatusInternalServerError)
+		return
+	}
+
+	logs, err := joblogs.LoadAll(ctx, s.storage, artifacts)
+	if err != nil {
+		log.Printf("load job logs: %v", err)
 		http.Error(w, "failed to get job logs", http.StatusInternalServerError)
 		return
 	}
@@ -318,40 +416,10 @@ func (s *Server) workerHeartbeat(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
-const defaultJobLease = 30 * time.Minute
-
-func (s *Server) workerRequestJob(w http.ResponseWriter, r *http.Request) {
+func (s *Server) workerClaimJob(w http.ResponseWriter, r *http.Request) {
 	type req struct {
 		WorkerID string `json:"worker_id"`
-	}
-	var body req
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, "invalid json", http.StatusBadRequest)
-		return
-	}
-	if body.WorkerID == "" {
-		http.Error(w, "worker_id is required", http.StatusBadRequest)
-		return
-	}
-
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
-	defer cancel()
-
-	job, err := s.store.AcquireJob(ctx, body.WorkerID, defaultJobLease)
-	if err != nil {
-		log.Printf("acquire job: %v", err)
-		http.Error(w, "failed to acquire job", http.StatusInternalServerError)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"job": job})
-}
-
-func (s *Server) workerJobResult(w http.ResponseWriter, r *http.Request) {
-	type req struct {
-		WorkerID string              `json:"worker_id"`
-		JobID    string              `json:"job_id"`
-		Success  bool                `json:"success"`
-		Logs     []types.JobLogEntry `json:"logs"`
+		JobID    string `json:"job_id"`
 	}
 	var body req
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -363,10 +431,101 @@ func (s *Server) workerJobResult(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
-	if err := s.store.FinishJob(ctx, body.JobID, body.WorkerID, body.Success, body.Logs); err != nil {
+	job, err := s.store.ClaimJob(ctx, body.JobID, body.WorkerID, JobLeaseFromEnv())
+	if err != nil {
+		if errors.Is(err, store.ErrJobNotClaimable) {
+			http.Error(w, "job not dispatchable or already claimed", http.StatusConflict)
+			return
+		}
+		log.Printf("claim job: %v", err)
+		http.Error(w, "failed to claim job", http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"job": job})
+}
+
+func (s *Server) workerRenewLease(w http.ResponseWriter, r *http.Request) {
+	type req struct {
+		WorkerID         string `json:"worker_id"`
+		JobID            string `json:"job_id"`
+		LeaseGeneration  int64  `json:"lease_generation"`
+	}
+	var body req
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "invalid json", http.StatusBadRequest)
+		return
+	}
+	if body.WorkerID == "" || body.JobID == "" || body.LeaseGeneration <= 0 {
+		http.Error(w, "worker_id, job_id and lease_generation are required", http.StatusBadRequest)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	job, err := s.store.RenewLease(ctx, body.JobID, body.WorkerID, body.LeaseGeneration, JobLeaseFromEnv())
+	if err != nil {
+		if errors.Is(err, store.ErrLeaseLost) {
+			http.Error(w, "lease lost or generation mismatch", http.StatusConflict)
+			return
+		}
+		log.Printf("renew lease: %v", err)
+		http.Error(w, "failed to renew lease", http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"job": job})
+}
+
+func (s *Server) workerJobResult(w http.ResponseWriter, r *http.Request) {
+	type req struct {
+		WorkerID         string              `json:"worker_id"`
+		JobID            string              `json:"job_id"`
+		LeaseGeneration  int64               `json:"lease_generation"`
+		Success          bool                `json:"success"`
+		Logs             []types.JobLogEntry `json:"logs"`
+	}
+	var body req
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "invalid json", http.StatusBadRequest)
+		return
+	}
+	if body.WorkerID == "" || body.JobID == "" || body.LeaseGeneration <= 0 {
+		http.Error(w, "worker_id, job_id and lease_generation are required", http.StatusBadRequest)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
+	defer cancel()
+
+	var artifact *types.JobLogArtifactInput
+	if len(body.Logs) > 0 {
+		if s.storage == nil {
+			http.Error(w, "object storage is not configured", http.StatusServiceUnavailable)
+			return
+		}
+		job, err := s.store.GetJob(ctx, body.JobID)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				http.Error(w, "job not found", http.StatusNotFound)
+				return
+			}
+			log.Printf("get job for logs upload: %v", err)
+			http.Error(w, "failed to finish job", http.StatusInternalServerError)
+			return
+		}
+		meta, err := joblogs.Upload(ctx, s.storage, body.JobID, job.Attempt, body.Logs)
+		if err != nil {
+			log.Printf("upload job logs: %v", err)
+			http.Error(w, "failed to store job logs", http.StatusInternalServerError)
+			return
+		}
+		artifact = &meta
+	}
+
+	if err := s.store.FinishJob(ctx, body.JobID, body.WorkerID, body.LeaseGeneration, body.Success, artifact); err != nil {
 		if errors.Is(err, store.ErrJobNotAssigned) {
 			http.Error(w, "job not assigned to worker or not running", http.StatusConflict)
 			return

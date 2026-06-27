@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"go_distributed_system/internal/queue"
 	"go_distributed_system/internal/storage"
 	"go_distributed_system/internal/worker"
 
@@ -20,6 +21,11 @@ func main() {
 	schedulerURL := os.Getenv("SCHEDULER_URL")
 	if schedulerURL == "" {
 		log.Fatal("SCHEDULER_URL is required, e.g. http://localhost:8080")
+	}
+
+	rabbitURL := os.Getenv("RABBITMQ_URL")
+	if rabbitURL == "" {
+		log.Fatal("RABBITMQ_URL is required")
 	}
 
 	workerID := os.Getenv("WORKER_ID")
@@ -56,16 +62,34 @@ func main() {
 	gpuAvailable := os.Getenv("WORKER_GPU_AVAILABLE") == "true" || os.Getenv("WORKER_GPU_AVAILABLE") == "1"
 
 	cfg := worker.Config{
-		ID:              workerID,
-		Hostname:        hostname,
-		CPUCores:        cpuCores,
-		GPUAvailable:    gpuAvailable,
-		MaxParallelJobs: maxParallel,
-		SchedulerURL:    schedulerURL,
-		TempDir:         os.Getenv("WORKER_TEMP_DIR"),
-		HeartbeatEvery:  envDuration("WORKER_HEARTBEAT_INTERVAL", 10*time.Second),
-		PollInterval:     envDuration("WORKER_POLL_INTERVAL", 2*time.Second),
+		ID:                    workerID,
+		Hostname:              hostname,
+		CPUCores:              cpuCores,
+		GPUAvailable:          gpuAvailable,
+		MaxParallelJobs:       maxParallel,
+		SchedulerURL:          schedulerURL,
+		SchedulerAPIKey:       os.Getenv("SCHEDULER_WORKER_API_KEY"),
+		RabbitMQURL:           rabbitURL,
+		TempDir:               os.Getenv("WORKER_TEMP_DIR"),
+		HeartbeatEvery:        envDuration("WORKER_HEARTBEAT_INTERVAL", 10*time.Second),
+		LeaseRenewInterval:    envDuration("WORKER_LEASE_RENEW_INTERVAL", 0),
+		JobLeaseDuration:      envDuration("WORKER_JOB_LEASE_DURATION", envDuration("JOB_LEASE_DURATION", 30*time.Minute)),
+		DefaultMaxJobDuration: envDuration("WORKER_DEFAULT_MAX_DURATION", envDuration("JOB_DEFAULT_MAX_DURATION", 2*time.Hour)),
 	}
+
+	rabbitCfg := queue.RabbitConfig{
+		URL:      rabbitURL,
+		Prefetch: maxParallel,
+	}
+	rabbit, err := queue.NewRabbitWithRetry(rabbitCfg, 30, 500*time.Millisecond)
+	if err != nil {
+		log.Fatalf("init rabbit: %v", err)
+	}
+	defer func() {
+		if err := rabbit.Close(); err != nil {
+			log.Printf("close rabbit: %v", err)
+		}
+	}()
 
 	var objStorage storage.ObjectStorage
 	if _, ok := storage.ConfigFromEnv(); ok {
@@ -80,7 +104,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	w := worker.New(cfg, objStorage)
+	w := worker.New(cfg, objStorage, rabbit)
 	log.Printf("starting worker %s (%s), parallel=%d", cfg.ID, cfg.Hostname, cfg.MaxParallelJobs)
 	if err := w.Run(ctx); err != nil && err != context.Canceled {
 		log.Fatalf("worker stopped: %v", err)

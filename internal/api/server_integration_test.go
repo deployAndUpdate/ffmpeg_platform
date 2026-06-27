@@ -3,143 +3,134 @@
 package api_test
 
 import (
-	"bytes"
-	"encoding/json"
-	"io"
-	"net/http"
+	"context"
 	"net/http/httptest"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"testing"
-
-	"go_distributed_system/internal/api"
-	"go_distributed_system/internal/testutil"
-	"go_distributed_system/internal/types"
+	"time"
 
 	"github.com/google/uuid"
+
+	"go_distributed_system/internal/api"
+	"go_distributed_system/internal/api/auth"
+	"go_distributed_system/internal/joblogs"
+	"go_distributed_system/internal/outbox"
+	"go_distributed_system/internal/storage"
+	"go_distributed_system/internal/store"
+	"go_distributed_system/internal/testutil"
+	"go_distributed_system/internal/types"
+	"go_distributed_system/internal/worker"
 )
 
-func TestJobLifecycleSmoke(t *testing.T) {
+func TestJobLifecycleE2E_RabbitOutbox(t *testing.T) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg not installed")
+	}
+
 	st, cleanup := testutil.OpenStore(t)
 	defer cleanup()
+	rabbit := testutil.OpenRabbit(t)
 
-	srv := httptest.NewServer(api.NewServer(st))
+	workDir := t.TempDir()
+	inputPath := filepath.Join(workDir, "input.mp4")
+	outputPath := filepath.Join(workDir, "output.mp3")
+	testutil.CopySampleVideo(t, inputPath)
+
+	ctx := context.Background()
+	jobID := uuid.New().String()
+	if err := st.CreateAndDispatch(ctx, &store.JobCreateParams{
+		ID:          jobID,
+		InputPath:   inputPath,
+		OutputPath:  outputPath,
+		Preset:      "mp3_192k",
+		FFmpegArgs:  "-vn -acodec libmp3lame -b:a 192k",
+		Storage:     types.StorageLocal,
+		MaxAttempts: 3,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	relay := outbox.New(st, rabbit, outbox.Config{Batch: 10, Enabled: true})
+	testutil.RelayUntilOutboxEmpty(t, relay, st.CountUnpublishedOutbox)
+
+	obj := storage.NewMemory("integration")
+	srv := httptest.NewServer(api.NewServerWithStorageAuthAndRabbit(st, obj, storage.Config{}, auth.Config{}, rabbit))
 	defer srv.Close()
 
 	workerID := uuid.New().String()
+	w := worker.New(worker.Config{
+		ID:                    workerID,
+		Hostname:              "integration-test",
+		CPUCores:              1,
+		MaxParallelJobs:       1,
+		SchedulerURL:          srv.URL,
+		HeartbeatEvery:        2 * time.Second,
+		LeaseRenewInterval:    5 * time.Second,
+		JobLeaseDuration:      5 * time.Minute,
+		DefaultMaxJobDuration: 10 * time.Minute,
+	}, nil, rabbit)
 
-	createResp := postJSON(t, srv.URL+"/jobs", map[string]any{
-		"input_path":  "/data/in.mp4",
-		"output_path": "/data/out.mp4",
-		"ffmpeg_args": "-c:v libx264",
-	})
-	defer createResp.Body.Close()
-	if createResp.StatusCode != http.StatusCreated {
-		body, _ := io.ReadAll(createResp.Body)
-		t.Fatalf("create job: status=%d body=%s", createResp.StatusCode, body)
-	}
-	var created types.Job
-	if err := json.NewDecoder(createResp.Body).Decode(&created); err != nil {
-		t.Fatal(err)
-	}
+	runCtx, cancelRun := context.WithCancel(context.Background())
+	defer cancelRun()
 
-	regResp := postJSON(t, srv.URL+"/workers/register", map[string]any{
-		"id":                workerID,
-		"hostname":          "smoke-test",
-		"cpu_cores":         4,
-		"max_parallel_jobs": 1,
-	})
-	regResp.Body.Close()
-	if regResp.StatusCode != http.StatusOK {
-		t.Fatalf("register worker: status=%d", regResp.StatusCode)
-	}
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- w.Run(runCtx)
+	}()
 
-	reqJobResp := postJSON(t, srv.URL+"/workers/request-job", map[string]string{
-		"worker_id": workerID,
-	})
-	defer reqJobResp.Body.Close()
-	if reqJobResp.StatusCode != http.StatusOK {
-		t.Fatalf("request job: status=%d", reqJobResp.StatusCode)
+	deadline := time.Now().Add(5 * time.Minute)
+	for time.Now().Before(deadline) {
+		job, err := st.GetJob(ctx, jobID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		switch job.Status {
+		case types.JobStatusCompleted:
+			cancelRun()
+			goto verify
+		case types.JobStatusFailed:
+			t.Fatalf("job failed after %d attempts", job.Attempt)
+		}
+		time.Sleep(500 * time.Millisecond)
 	}
-	var reqJobOut struct {
-		Job *types.Job `json:"job"`
-	}
-	if err := json.NewDecoder(reqJobResp.Body).Decode(&reqJobOut); err != nil {
-		t.Fatal(err)
-	}
-	if reqJobOut.Job == nil || reqJobOut.Job.ID != created.ID {
-		t.Fatalf("acquired job = %+v, want id=%s", reqJobOut.Job, created.ID)
-	}
-	if reqJobOut.Job.Status != types.JobStatusRunning {
-		t.Fatalf("acquired status = %q, want RUNNING", reqJobOut.Job.Status)
-	}
+	t.Fatal("timeout waiting for job to complete")
 
-	resultResp := postJSON(t, srv.URL+"/workers/job-result", map[string]any{
-		"worker_id": workerID,
-		"job_id":    created.ID,
-		"success":   true,
-		"logs": []types.JobLogEntry{
-			{Stream: "stdout", Line: "encoded successfully"},
-		},
-	})
-	resultResp.Body.Close()
-	if resultResp.StatusCode != http.StatusOK {
-		t.Fatalf("job result: status=%d", resultResp.StatusCode)
+verify:
+	select {
+	case err := <-errCh:
+		if err != nil && err != context.Canceled {
+			t.Fatalf("worker run: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("worker did not stop after job completion")
 	}
 
-	getResp, err := http.Get(srv.URL + "/jobs/" + created.ID)
+	if _, err := os.Stat(outputPath); err != nil {
+		t.Fatalf("output file missing: %v", err)
+	}
+
+	artifacts, err := st.ListLogArtifacts(ctx, jobID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer getResp.Body.Close()
-	if getResp.StatusCode != http.StatusOK {
-		t.Fatalf("get job: status=%d", getResp.StatusCode)
+	logs, err := joblogs.LoadAll(ctx, obj, artifacts)
+	if err != nil {
+		t.Fatal(err)
 	}
-	var final types.Job
-	if err := json.NewDecoder(getResp.Body).Decode(&final); err != nil {
+	if len(logs) == 0 {
+		t.Fatal("expected ffmpeg logs to be stored")
+	}
+
+	final, err := st.GetJob(ctx, jobID)
+	if err != nil {
 		t.Fatal(err)
 	}
 	if final.Status != types.JobStatusCompleted {
 		t.Fatalf("final status = %q, want COMPLETED", final.Status)
 	}
-
-	logsResp, err := http.Get(srv.URL + "/jobs/" + created.ID + "/logs")
-	if err != nil {
-		t.Fatal(err)
+	if final.AssignedWorkerID == nil || *final.AssignedWorkerID != workerID {
+		t.Fatalf("assigned_worker_id = %v, want %s", final.AssignedWorkerID, workerID)
 	}
-	defer logsResp.Body.Close()
-	if logsResp.StatusCode != http.StatusOK {
-		t.Fatalf("get logs: status=%d", logsResp.StatusCode)
-	}
-	var logsOut struct {
-		JobID string          `json:"job_id"`
-		Logs  []types.JobLog  `json:"logs"`
-	}
-	if err := json.NewDecoder(logsResp.Body).Decode(&logsOut); err != nil {
-		t.Fatal(err)
-	}
-	if logsOut.JobID != created.ID {
-		t.Fatalf("logs job_id = %q, want %q", logsOut.JobID, created.ID)
-	}
-	if len(logsOut.Logs) != 1 || logsOut.Logs[0].Line != "encoded successfully" {
-		t.Fatalf("unexpected logs: %+v", logsOut.Logs)
-	}
-
-	// Heartbeat path on real store
-	hbResp := postJSON(t, srv.URL+"/workers/heartbeat", map[string]string{"id": workerID})
-	hbResp.Body.Close()
-	if hbResp.StatusCode != http.StatusOK {
-		t.Fatalf("heartbeat: status=%d", hbResp.StatusCode)
-	}
-}
-
-func postJSON(t *testing.T, url string, body any) *http.Response {
-	t.Helper()
-	payload, err := json.Marshal(body)
-	if err != nil {
-		t.Fatal(err)
-	}
-	resp, err := http.Post(url, "application/json", bytes.NewReader(payload))
-	if err != nil {
-		t.Fatal(err)
-	}
-	return resp
 }
