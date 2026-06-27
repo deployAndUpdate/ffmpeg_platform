@@ -17,7 +17,7 @@ func TestAdminStats(t *testing.T) {
 	st := &mockStore{
 		getAdminStatsFn: func(_ context.Context) (store.AdminStats, error) {
 			return store.AdminStats{
-				JobsByStatus:  map[string]int{"RUNNING": 2, "QUEUED": 5},
+				JobsByStatus:  map[string]int{"RUNNING": 2, "DISPATCHED": 5},
 				WorkersActive: 3,
 				WorkersDead:   1,
 				QueueDepth:    5,

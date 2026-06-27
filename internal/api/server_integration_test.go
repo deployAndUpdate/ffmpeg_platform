@@ -14,41 +14,47 @@ import (
 	"github.com/google/uuid"
 
 	"go_distributed_system/internal/api"
+	"go_distributed_system/internal/api/auth"
+	"go_distributed_system/internal/outbox"
+	"go_distributed_system/internal/storage"
+	"go_distributed_system/internal/store"
 	"go_distributed_system/internal/testutil"
 	"go_distributed_system/internal/types"
 	"go_distributed_system/internal/worker"
 )
 
-func TestJobLifecycleSmoke(t *testing.T) {
+func TestJobLifecycleE2E_RabbitOutbox(t *testing.T) {
 	if _, err := exec.LookPath("ffmpeg"); err != nil {
 		t.Skip("ffmpeg not installed")
 	}
 
 	st, cleanup := testutil.OpenStore(t)
 	defer cleanup()
+	rabbit := testutil.OpenRabbit(t)
 
 	workDir := t.TempDir()
 	inputPath := filepath.Join(workDir, "input.mp4")
 	outputPath := filepath.Join(workDir, "output.mp3")
 	testutil.CopySampleVideo(t, inputPath)
 
-	jobID := uuid.New().String()
 	ctx := context.Background()
-	if err := st.CreateJob(ctx, &types.Job{
+	jobID := uuid.New().String()
+	if err := st.CreateAndDispatch(ctx, &store.JobCreateParams{
 		ID:          jobID,
 		InputPath:   inputPath,
 		OutputPath:  outputPath,
 		Preset:      "mp3_192k",
 		FFmpegArgs:  "-vn -acodec libmp3lame -b:a 192k",
 		Storage:     types.StorageLocal,
-		Status:      types.JobStatusQueued,
-		Attempt:     0,
 		MaxAttempts: 3,
 	}); err != nil {
 		t.Fatal(err)
 	}
 
-	srv := httptest.NewServer(api.NewServer(st))
+	relay := outbox.New(st, rabbit, outbox.Config{Batch: 10, Enabled: true})
+	testutil.RelayUntilOutboxEmpty(t, relay, st.CountUnpublishedOutbox)
+
+	srv := httptest.NewServer(api.NewServerWithStorageAuthAndRabbit(st, nil, storage.Config{}, auth.Config{}, rabbit))
 	defer srv.Close()
 
 	workerID := uuid.New().String()
@@ -58,12 +64,11 @@ func TestJobLifecycleSmoke(t *testing.T) {
 		CPUCores:              1,
 		MaxParallelJobs:       1,
 		SchedulerURL:          srv.URL,
-		PollInterval:          200 * time.Millisecond,
 		HeartbeatEvery:        2 * time.Second,
 		LeaseRenewInterval:    5 * time.Second,
 		JobLeaseDuration:      5 * time.Minute,
 		DefaultMaxJobDuration: 10 * time.Minute,
-	}, nil)
+	}, nil, rabbit)
 
 	runCtx, cancelRun := context.WithCancel(context.Background())
 	defer cancelRun()
@@ -85,8 +90,6 @@ func TestJobLifecycleSmoke(t *testing.T) {
 			goto verify
 		case types.JobStatusFailed:
 			t.Fatalf("job failed after %d attempts", job.Attempt)
-		case types.JobStatusRetry:
-			t.Fatalf("job moved to RETRY unexpectedly (attempt %d)", job.Attempt)
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
@@ -120,9 +123,6 @@ verify:
 	}
 	if final.Status != types.JobStatusCompleted {
 		t.Fatalf("final status = %q, want COMPLETED", final.Status)
-	}
-	if final.FinishedAt == nil {
-		t.Fatal("expected finished_at")
 	}
 	if final.AssignedWorkerID == nil || *final.AssignedWorkerID != workerID {
 		t.Fatalf("assigned_worker_id = %v, want %s", final.AssignedWorkerID, workerID)

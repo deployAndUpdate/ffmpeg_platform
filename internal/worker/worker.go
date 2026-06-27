@@ -11,36 +11,38 @@ import (
 	"time"
 
 	"go_distributed_system/internal/ffmpeg"
+	"go_distributed_system/internal/queue"
 	"go_distributed_system/internal/storage"
 	"go_distributed_system/internal/types"
 )
 
 // Config holds worker runtime settings.
 type Config struct {
-	ID                   string
-	Hostname             string
-	CPUCores             int
-	GPUAvailable         bool
-	MaxParallelJobs      int
-	SchedulerURL         string
-	SchedulerAPIKey      string
-	TempDir              string
-	HeartbeatEvery       time.Duration
-	PollInterval         time.Duration
-	LeaseRenewInterval   time.Duration
-	JobLeaseDuration     time.Duration
+	ID                    string
+	Hostname              string
+	CPUCores              int
+	GPUAvailable          bool
+	MaxParallelJobs       int
+	SchedulerURL          string
+	SchedulerAPIKey       string
+	RabbitMQURL           string
+	TempDir               string
+	HeartbeatEvery        time.Duration
+	LeaseRenewInterval    time.Duration
+	JobLeaseDuration      time.Duration
 	DefaultMaxJobDuration time.Duration
 }
 
-// Worker pulls jobs from the scheduler and runs ffmpeg.
+// Worker pulls jobs from RabbitMQ and runs ffmpeg.
 type Worker struct {
 	cfg     Config
 	client  *Client
 	storage storage.ObjectStorage
+	queue   queue.Consumer
 }
 
 // New creates a worker instance.
-func New(cfg Config, obj storage.ObjectStorage) *Worker {
+func New(cfg Config, obj storage.ObjectStorage, q queue.Consumer) *Worker {
 	if cfg.TempDir == "" {
 		cfg.TempDir = "/tmp/jobs"
 	}
@@ -60,10 +62,11 @@ func New(cfg Config, obj storage.ObjectStorage) *Worker {
 		cfg:     cfg,
 		client:  NewClientWithAPIKey(cfg.SchedulerURL, cfg.SchedulerAPIKey),
 		storage: obj,
+		queue:   q,
 	}
 }
 
-// Run registers the worker, sends heartbeats, and processes jobs until ctx is cancelled.
+// Run registers the worker, sends heartbeats, and consumes jobs until ctx is cancelled.
 func (w *Worker) Run(ctx context.Context) error {
 	worker := &types.Worker{
 		ID:              w.cfg.ID,
@@ -76,29 +79,14 @@ func (w *Worker) Run(ctx context.Context) error {
 	if err := w.client.Register(ctx, worker); err != nil {
 		return fmt.Errorf("register: %w", err)
 	}
-	log.Printf("worker %s registered at %s", w.cfg.ID, w.cfg.SchedulerURL)
+	log.Printf("worker %s registered at %s (rabbit dispatch)", w.cfg.ID, w.cfg.SchedulerURL)
 
 	hbCtx, cancelHB := context.WithCancel(ctx)
 	defer cancelHB()
 	go w.heartbeatLoop(hbCtx)
 
-	slots := make(chan struct{}, w.cfg.MaxParallelJobs)
-	var wg sync.WaitGroup
-
-	for {
-		select {
-		case <-ctx.Done():
-			wg.Wait()
-			return ctx.Err()
-		case slots <- struct{}{}:
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				defer func() { <-slots }()
-				w.processOne(ctx)
-			}()
-		}
-	}
+	consumer := NewConsumer(w.queue, w)
+	return consumer.Run(ctx)
 }
 
 func (w *Worker) heartbeatLoop(ctx context.Context) {
@@ -115,35 +103,6 @@ func (w *Worker) heartbeatLoop(ctx context.Context) {
 			}
 		}
 	}
-}
-
-func (w *Worker) processOne(ctx context.Context) {
-	job, err := w.client.RequestJob(ctx, w.cfg.ID)
-	if err != nil {
-		log.Printf("request job failed: %v", err)
-		w.sleep(ctx, w.cfg.PollInterval)
-		return
-	}
-	if job == nil {
-		w.sleep(ctx, w.cfg.PollInterval)
-		return
-	}
-
-	log.Printf("running job %s (attempt %d, generation %d)", job.ID, job.Attempt, job.LeaseGeneration)
-	success, logs := w.executeJob(ctx, *job)
-
-	submitCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	if err := w.client.SubmitJobResult(submitCtx, w.cfg.ID, job.ID, job.LeaseGeneration, success, logs); err != nil {
-		log.Printf("submit result for job %s failed: %v", job.ID, err)
-		return
-	}
-
-	status := "failed"
-	if success {
-		status = "completed"
-	}
-	log.Printf("job %s %s", job.ID, status)
 }
 
 func (w *Worker) executeJob(ctx context.Context, job types.Job) (bool, []types.JobLogEntry) {
@@ -306,15 +265,6 @@ func (w *Worker) r2OutputLooksValid(ctx context.Context, key string) bool {
 		return false
 	}
 	return stat.Size >= 256
-}
-
-func (w *Worker) sleep(ctx context.Context, d time.Duration) {
-	timer := time.NewTimer(d)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-	case <-timer.C:
-	}
 }
 
 func isLeaseLost(err error) bool {

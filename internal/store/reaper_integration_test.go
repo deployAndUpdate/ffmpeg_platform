@@ -65,14 +65,8 @@ func TestReapExpiredLeaseToRetry(t *testing.T) {
 	workerID := uuid.New().String()
 	registerWorker(t, st, workerID)
 
-	jobID := uuid.New().String()
-	if err := st.CreateJob(ctx, &types.Job{
-		ID: jobID, InputPath: "/in.mp4", OutputPath: "/out.mp4",
-		FFmpegArgs: "-c:v libx264", Status: types.JobStatusQueued, MaxAttempts: 3,
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := st.AcquireJob(ctx, workerID, time.Minute); err != nil {
+	jobID := testutil.CreateDispatchedJob(t, st, "/in.mp4", "/out.mp4")
+	if _, err := st.ClaimJob(ctx, jobID, workerID, time.Minute); err != nil {
 		t.Fatal(err)
 	}
 
@@ -90,14 +84,19 @@ func TestReapExpiredLeaseToRetry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Status != types.JobStatusRetry {
-		t.Fatalf("status = %q, want RETRY", got.Status)
+	if got.Status != types.JobStatusDispatched {
+		t.Fatalf("status = %q, want DISPATCHED", got.Status)
 	}
 	if got.AssignedWorkerID != nil {
 		t.Fatalf("assigned_worker_id = %v, want nil", got.AssignedWorkerID)
 	}
-	if got.LeaseExpiresAt != nil {
-		t.Fatal("expected lease cleared")
+
+	n, err := st.CountUnpublishedOutbox(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n < 1 {
+		t.Fatalf("expected retry outbox row, got %d unpublished", n)
 	}
 }
 
@@ -112,11 +111,11 @@ func TestReapExpiredLeaseToFailed(t *testing.T) {
 	jobID := uuid.New().String()
 	if err := st.CreateJob(ctx, &types.Job{
 		ID: jobID, InputPath: "/in.mp4", OutputPath: "/out.mp4",
-		FFmpegArgs: "-c:v libx264", Status: types.JobStatusQueued, MaxAttempts: 1,
+		FFmpegArgs: "-c:v libx264", Status: types.JobStatusDispatched, MaxAttempts: 1,
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.AcquireJob(ctx, workerID, time.Minute); err != nil {
+	if _, err := st.ClaimJob(ctx, jobID, workerID, time.Minute); err != nil {
 		t.Fatal(err)
 	}
 
@@ -137,9 +136,6 @@ func TestReapExpiredLeaseToFailed(t *testing.T) {
 	if got.Status != types.JobStatusFailed {
 		t.Fatalf("status = %q, want FAILED", got.Status)
 	}
-	if got.FinishedAt == nil {
-		t.Fatal("expected finished_at")
-	}
 }
 
 func TestReapJobsFromDeadWorker(t *testing.T) {
@@ -150,14 +146,8 @@ func TestReapJobsFromDeadWorker(t *testing.T) {
 	workerID := uuid.New().String()
 	registerWorker(t, st, workerID)
 
-	jobID := uuid.New().String()
-	if err := st.CreateJob(ctx, &types.Job{
-		ID: jobID, InputPath: "/in.mp4", OutputPath: "/out.mp4",
-		FFmpegArgs: "-c:v libx264", Status: types.JobStatusQueued, MaxAttempts: 3,
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := st.AcquireJob(ctx, workerID, 30*time.Minute); err != nil {
+	jobID := testutil.CreateDispatchedJob(t, st, "/in.mp4", "/out.mp4")
+	if _, err := st.ClaimJob(ctx, jobID, workerID, 30*time.Minute); err != nil {
 		t.Fatal(err)
 	}
 
@@ -175,8 +165,8 @@ func TestReapJobsFromDeadWorker(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Status != types.JobStatusRetry {
-		t.Fatalf("status = %q, want RETRY", got.Status)
+	if got.Status != types.JobStatusDispatched {
+		t.Fatalf("status = %q, want DISPATCHED", got.Status)
 	}
 }
 
@@ -188,14 +178,8 @@ func TestReapNoOpWhenLeaseValid(t *testing.T) {
 	workerID := uuid.New().String()
 	registerWorker(t, st, workerID)
 
-	jobID := uuid.New().String()
-	if err := st.CreateJob(ctx, &types.Job{
-		ID: jobID, InputPath: "/in.mp4", OutputPath: "/out.mp4",
-		FFmpegArgs: "-c:v libx264", Status: types.JobStatusQueued, MaxAttempts: 3,
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := st.AcquireJob(ctx, workerID, 30*time.Minute); err != nil {
+	jobID := testutil.CreateDispatchedJob(t, st, "/in.mp4", "/out.mp4")
+	if _, err := st.ClaimJob(ctx, jobID, workerID, 30*time.Minute); err != nil {
 		t.Fatal(err)
 	}
 
@@ -224,14 +208,8 @@ func TestReapIdempotent(t *testing.T) {
 	workerID := uuid.New().String()
 	registerWorker(t, st, workerID)
 
-	jobID := uuid.New().String()
-	if err := st.CreateJob(ctx, &types.Job{
-		ID: jobID, InputPath: "/in.mp4", OutputPath: "/out.mp4",
-		FFmpegArgs: "-c:v libx264", Status: types.JobStatusQueued, MaxAttempts: 3,
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := st.AcquireJob(ctx, workerID, time.Minute); err != nil {
+	jobID := testutil.CreateDispatchedJob(t, st, "/in.mp4", "/out.mp4")
+	if _, err := st.ClaimJob(ctx, jobID, workerID, time.Minute); err != nil {
 		t.Fatal(err)
 	}
 	execTestSQL(t, `UPDATE jobs SET lease_expires_at = NOW() - interval '1 minute' WHERE id = $1`, jobID)

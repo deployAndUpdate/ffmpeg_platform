@@ -65,8 +65,18 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
+      rabbitmq:
+        image: rabbitmq:3-management-alpine
+        ports:
+          - 5672:5672
+        options: >-
+          --health-cmd "rabbitmq-diagnostics ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     env:
       TEST_DB_DSN: postgres://video:video@localhost:5432/video_test?sslmode=disable
+      TEST_RABBITMQ_URL: amqp://guest:guest@localhost:5672/
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -78,4 +88,4 @@ jobs:
       - name: apply migrations
         run: DB_DSN=$TEST_DB_DSN go run ./cmd/migrate up
       - name: integration tests
-        run: go test -race -count=1 -p 1 -tags=integration ./internal/migrate/... ./internal/store/... ./internal/api/... ./internal/worker/...
+        run: go test -race -count=1 -p 1 -tags=integration ./internal/migrate/... ./internal/store/... ./internal/outbox/... ./internal/queue/... ./internal/api/... ./internal/worker/... ./internal/reaper/...

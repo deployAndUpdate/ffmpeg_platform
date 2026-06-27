@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"go_distributed_system/internal/storage"
+	"go_distributed_system/internal/store"
 	"go_distributed_system/internal/types"
 )
 
@@ -28,11 +29,17 @@ func (r *recordingObjectStorage) UploadReader(_ context.Context, key string, bod
 }
 
 func TestCreateJobFromUploadSuccess(t *testing.T) {
-	var captured *types.Job
+	var captured *store.JobCreateParams
 	st := &mockStore{
-		createJobFn: func(_ context.Context, job *types.Job) error {
-			captured = job
+		createAndDispatchFn: func(_ context.Context, p *store.JobCreateParams) error {
+			captured = p
 			return nil
+		},
+		getJobFn: func(_ context.Context, id string) (*types.Job, error) {
+			return &types.Job{
+				ID: id, Storage: types.StorageR2, Status: types.JobStatusDispatched,
+				Preset: captured.Preset,
+			}, nil
 		},
 	}
 	obj := &recordingObjectStorage{mockObjectStorage: mockObjectStorage{bucket: "ffmpegfiles"}}
@@ -76,14 +83,14 @@ func TestCreateJobFromUploadSuccess(t *testing.T) {
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		t.Fatal(err)
 	}
-	if out.Status != types.JobStatusQueued {
-		t.Fatalf("status = %q, want QUEUED", out.Status)
+	if out.Status != types.JobStatusDispatched {
+		t.Fatalf("status = %q, want DISPATCHED", out.Status)
 	}
 	if out.Storage != types.StorageR2 {
 		t.Fatalf("storage = %q, want r2", out.Storage)
 	}
 	if captured == nil || captured.ID != out.ID {
-		t.Fatal("expected store.CreateJob with response id")
+		t.Fatal("expected store.CreateAndDispatch with response id")
 	}
 	if captured.Preset != "mp3_192k" {
 		t.Fatalf("preset = %q, want mp3_192k", captured.Preset)

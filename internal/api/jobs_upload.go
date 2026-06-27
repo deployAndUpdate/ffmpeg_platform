@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"go_distributed_system/internal/storage"
+	"go_distributed_system/internal/store"
 	"go_distributed_system/internal/types"
 
 	"github.com/google/uuid"
@@ -87,19 +88,24 @@ func (s *Server) createJobFromUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	job := &types.Job{
+	if err := s.store.CreateAndDispatch(ctx, &store.JobCreateParams{
 		ID:          id,
 		InputPath:   inputKey,
 		OutputPath:  outputKey,
 		Preset:      spec.Preset,
 		FFmpegArgs:  spec.FFmpegArgs,
 		Storage:     types.StorageR2,
-		Status:      types.JobStatusQueued,
 		Attempt:     0,
 		MaxAttempts: maxAttempts,
-	}
-	if err := s.store.CreateJob(ctx, job); err != nil {
+	}); err != nil {
 		log.Printf("create upload job: %v", err)
+		http.Error(w, "failed to create job", http.StatusInternalServerError)
+		return
+	}
+
+	job, err := s.store.GetJob(ctx, id)
+	if err != nil {
+		log.Printf("get upload job: %v", err)
 		http.Error(w, "failed to create job", http.StatusInternalServerError)
 		return
 	}

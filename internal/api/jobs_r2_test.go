@@ -233,7 +233,7 @@ func TestQueueJobIntegrationShape(t *testing.T) {
 		return &types.Job{
 			ID:      jobID,
 			Storage: types.StorageR2,
-			Status:  types.JobStatusQueued,
+			Status:  types.JobStatusDispatched,
 		}, nil
 	}
 

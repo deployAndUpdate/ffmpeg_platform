@@ -22,11 +22,10 @@ func TestExecuteJobDoesNotDeadlock(t *testing.T) {
 		CPUCores:              1,
 		MaxParallelJobs:       1,
 		SchedulerURL:          "http://localhost:1",
-		PollInterval:          time.Second,
 		LeaseRenewInterval:    5 * time.Minute,
 		JobLeaseDuration:      time.Minute,
 		DefaultMaxJobDuration: time.Minute,
-	}, nil)
+	}, nil, nil)
 
 	done := make(chan struct{})
 	go func() {

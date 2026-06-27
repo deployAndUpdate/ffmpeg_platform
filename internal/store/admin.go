@@ -192,8 +192,7 @@ FROM workers`
 		return stats, err
 	}
 
-	stats.QueueDepth = stats.JobsByStatus[string(types.JobStatusQueued)] +
-		stats.JobsByStatus[string(types.JobStatusRetry)]
+	stats.QueueDepth = stats.JobsByStatus[string(types.JobStatusDispatched)]
 
 	return stats, nil
 }

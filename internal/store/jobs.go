@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"go_distributed_system/internal/queue"
 	"go_distributed_system/internal/types"
 )
 
@@ -14,45 +15,6 @@ var (
 	ErrJobNotAssigned = errors.New("job is not assigned to this worker or not running")
 	ErrLeaseLost      = errors.New("lease lost or generation mismatch")
 )
-
-// AcquireJob atomically claims the next available job for a worker.
-func (s *Store) AcquireJob(ctx context.Context, workerID string, lease time.Duration) (*types.Job, error) {
-	const q = `
-WITH next_job AS (
-    SELECT id
-    FROM jobs
-    WHERE status IN ('QUEUED', 'RETRY')
-    ORDER BY created_at ASC
-    FOR UPDATE SKIP LOCKED
-    LIMIT 1
-)
-UPDATE jobs j
-SET status = 'RUNNING',
-    assigned_worker_id = $1,
-    attempt = j.attempt + 1,
-    lease_expires_at = NOW() + ($2 * interval '1 second'),
-    lease_generation = j.lease_generation + 1,
-    started_at = NOW(),
-    updated_at = NOW()
-FROM next_job
-WHERE j.id = next_job.id
-RETURNING ` + jobReturningColumns
-
-	leaseSeconds := int64(lease.Seconds())
-	if leaseSeconds <= 0 {
-		leaseSeconds = 1800
-	}
-
-	row := s.db.QueryRowContext(ctx, q, workerID, leaseSeconds)
-	job, err := scanJob(row)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, nil
-		}
-		return nil, err
-	}
-	return job, nil
-}
 
 // RenewLease extends lease_expires_at for a running job owned by the worker.
 func (s *Store) RenewLease(ctx context.Context, jobID, workerID string, leaseGeneration int64, lease time.Duration) (*types.Job, error) {
@@ -82,9 +44,9 @@ RETURNING ` + jobSelectColumns
 	return job, nil
 }
 
-// FinishJob marks a running job as completed or failed/retry and stores logs.
-// leaseGeneration fences stale workers after reaper/re-acquire.
-// On success, a late finish is accepted when the job was moved to RETRY but not yet re-acquired.
+// FinishJob marks a running job as completed or failed/dispatched-for-retry and stores logs.
+// leaseGeneration fences stale workers after reaper/re-claim.
+// On success, a late finish is accepted when the job was moved to DISPATCHED but not yet re-claimed.
 func (s *Store) FinishJob(ctx context.Context, jobID, workerID string, leaseGeneration int64, success bool, logs []types.JobLogEntry) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -124,7 +86,7 @@ FOR UPDATE`
 		assigned.Valid && assigned.String == workerID &&
 		gen == leaseGeneration
 	lateFinish := success &&
-		status == types.JobStatusRetry &&
+		status == types.JobStatusDispatched &&
 		!assigned.Valid &&
 		gen == leaseGeneration
 
@@ -157,12 +119,15 @@ WHERE id = $1`
 	} else {
 		const retryQ = `
 UPDATE jobs
-SET status = 'RETRY',
+SET status = 'DISPATCHED',
     assigned_worker_id = NULL,
     lease_expires_at = NULL,
     updated_at = NOW()
 WHERE id = $1`
 		if _, err = tx.ExecContext(ctx, retryQ, jobID); err != nil {
+			return err
+		}
+		if err = insertOutboxTx(ctx, tx, jobID, queue.TargetRetry, attempt); err != nil {
 			return err
 		}
 	}

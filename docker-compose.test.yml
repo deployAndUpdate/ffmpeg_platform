@@ -1,5 +1,4 @@
-# Изолированный PostgreSQL только для integration-тестов (make test-integration).
-# Порт 5433 — не пересекается с dev postgres из docker-compose.yml (5432).
+# Integration test stack: PostgreSQL + RabbitMQ (make test-integration).
 name: go-distributed-system-test
 
 services:
@@ -19,3 +18,16 @@ services:
       timeout: 3s
       retries: 15
       start_period: 5s
+
+  rabbitmq-test:
+    image: rabbitmq:3-management-alpine
+    ports:
+      - "5673:5672"
+    tmpfs:
+      - /var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 2s
+      timeout: 5s
+      retries: 20
+      start_period: 10s

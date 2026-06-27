@@ -46,22 +46,28 @@ func (c *Client) Heartbeat(ctx context.Context, workerID string) error {
 	return c.post(ctx, "/workers/heartbeat", body, &out)
 }
 
-func (c *Client) RequestJob(ctx context.Context, workerID string) (*types.Job, error) {
-	body := map[string]string{"worker_id": workerID}
+func (c *Client) ClaimJob(ctx context.Context, workerID, jobID string) (*types.Job, error) {
+	body := map[string]string{
+		"worker_id": workerID,
+		"job_id":    jobID,
+	}
 	var resp struct {
 		Job *types.Job `json:"job"`
 	}
-	if err := c.post(ctx, "/workers/request-job", body, &resp); err != nil {
+	if err := c.post(ctx, "/workers/claim-job", body, &resp); err != nil {
 		return nil, err
+	}
+	if resp.Job == nil {
+		return nil, fmt.Errorf("claim job: empty job in response")
 	}
 	return resp.Job, nil
 }
 
 func (c *Client) RenewLease(ctx context.Context, workerID, jobID string, leaseGeneration int64) error {
 	body := map[string]any{
-		"worker_id":         workerID,
-		"job_id":            jobID,
-		"lease_generation":  leaseGeneration,
+		"worker_id":        workerID,
+		"job_id":           jobID,
+		"lease_generation": leaseGeneration,
 	}
 	var resp struct {
 		Job *types.Job `json:"job"`
@@ -71,11 +77,11 @@ func (c *Client) RenewLease(ctx context.Context, workerID, jobID string, leaseGe
 
 func (c *Client) SubmitJobResult(ctx context.Context, workerID, jobID string, leaseGeneration int64, success bool, logs []types.JobLogEntry) error {
 	body := map[string]any{
-		"worker_id":         workerID,
-		"job_id":            jobID,
-		"lease_generation":  leaseGeneration,
-		"success":           success,
-		"logs":              logs,
+		"worker_id":        workerID,
+		"job_id":           jobID,
+		"lease_generation": leaseGeneration,
+		"success":          success,
+		"logs":             logs,
 	}
 	var out map[string]string
 	return c.post(ctx, "/workers/job-result", body, &out)

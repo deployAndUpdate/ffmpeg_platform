@@ -11,6 +11,8 @@ import (
 
 	"go_distributed_system/internal/api"
 	"go_distributed_system/internal/api/auth"
+	"go_distributed_system/internal/outbox"
+	"go_distributed_system/internal/queue"
 	"go_distributed_system/internal/reaper"
 	"go_distributed_system/internal/storage"
 	"go_distributed_system/internal/store"
@@ -20,6 +22,11 @@ func main() {
 	dsn := os.Getenv("DB_DSN")
 	if dsn == "" {
 		log.Fatal("DB_DSN is required")
+	}
+
+	rabbitCfg, ok := queue.ConfigFromEnv()
+	if !ok {
+		log.Fatal("RABBITMQ_URL is required")
 	}
 
 	addr := os.Getenv("SCHEDULER_ADDR")
@@ -37,11 +44,24 @@ func main() {
 		}
 	}()
 
+	rabbit, err := queue.NewRabbitWithRetry(rabbitCfg, 30, 500*time.Millisecond)
+	if err != nil {
+		log.Fatalf("init rabbit: %v", err)
+	}
+	defer func() {
+		if err := rabbit.Close(); err != nil {
+			log.Printf("close rabbit: %v", err)
+		}
+	}()
+
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
 	r := reaper.New(st, reaper.ConfigFromEnv())
 	go r.Run(ctx)
+
+	relay := outbox.New(st, rabbit, outbox.ConfigFromEnv())
+	go relay.Run(ctx)
 
 	authCfg := auth.ConfigFromEnv()
 	if err := authCfg.Validate(); err != nil {
@@ -58,10 +78,10 @@ func main() {
 			log.Fatalf("init R2 storage: %v", err)
 		}
 		log.Printf("R2 storage enabled (bucket=%s)", obj.Bucket())
-		handler = api.NewServerWithStorageAndAuth(st, obj, cfg, authCfg)
+		handler = api.NewServerWithStorageAuthAndRabbit(st, obj, cfg, authCfg, rabbit)
 	} else {
 		log.Printf("R2 storage not configured — only local-path JSON jobs are available")
-		handler = api.NewServerWithStorageAndAuth(st, nil, storage.Config{}, authCfg)
+		handler = api.NewServerWithStorageAuthAndRabbit(st, nil, storage.Config{}, authCfg, rabbit)
 	}
 
 	uploadTimeout := api.UploadTimeoutFromEnv()

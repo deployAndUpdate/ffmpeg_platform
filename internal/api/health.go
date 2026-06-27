@@ -30,17 +30,23 @@ func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
 
 	checks := map[string]readinessCheck{
 		"postgres": s.checkPostgres(ctx),
+		"rabbitmq": s.checkRabbit(ctx),
 		"r2":       s.checkR2(ctx),
 	}
 
 	status := http.StatusOK
 	overall := "ok"
-	for _, c := range checks {
-		if c.Status == "fail" {
-			overall = "degraded"
-			status = http.StatusServiceUnavailable
-			break
+	for name, c := range checks {
+		if c.Status != "fail" {
+			continue
 		}
+		overall = "degraded"
+		// R2 is optional for core dispatch; do not block readiness on object storage alone.
+		if name == "r2" {
+			continue
+		}
+		status = http.StatusServiceUnavailable
+		break
 	}
 
 	writeJSON(w, status, readinessResponse{
@@ -52,6 +58,23 @@ func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
 func (s *Server) checkPostgres(ctx context.Context) readinessCheck {
 	start := time.Now()
 	if err := s.store.Ping(ctx); err != nil {
+		return readinessCheck{
+			Status: "fail",
+			Error:  err.Error(),
+		}
+	}
+	return readinessCheck{
+		Status:    "ok",
+		LatencyMS: time.Since(start).Milliseconds(),
+	}
+}
+
+func (s *Server) checkRabbit(ctx context.Context) readinessCheck {
+	if s.rabbit == nil {
+		return readinessCheck{Status: "skipped"}
+	}
+	start := time.Now()
+	if err := s.rabbit.Ping(ctx); err != nil {
 		return readinessCheck{
 			Status: "fail",
 			Error:  err.Error(),

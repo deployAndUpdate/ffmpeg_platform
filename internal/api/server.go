@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"go_distributed_system/internal/api/auth"
+	"go_distributed_system/internal/queue"
 	"go_distributed_system/internal/store"
 	"go_distributed_system/internal/storage"
 	"go_distributed_system/internal/types"
@@ -29,6 +30,7 @@ type Server struct {
 	maxUploadBytes  int64
 	uploadTimeout   time.Duration
 	auth            auth.Config
+	rabbit          queue.Publisher
 	mux             *http.ServeMux
 }
 
@@ -44,6 +46,11 @@ func NewServerWithStorage(st JobStore, obj storage.ObjectStorage, cfg storage.Co
 
 // NewServerWithStorageAndAuth is like NewServerWithStorage with explicit API key auth config.
 func NewServerWithStorageAndAuth(st JobStore, obj storage.ObjectStorage, cfg storage.Config, authCfg auth.Config) *Server {
+	return NewServerWithStorageAuthAndRabbit(st, obj, cfg, authCfg, nil)
+}
+
+// NewServerWithStorageAuthAndRabbit adds optional RabbitMQ readiness checks.
+func NewServerWithStorageAuthAndRabbit(st JobStore, obj storage.ObjectStorage, cfg storage.Config, authCfg auth.Config, pub queue.Publisher) *Server {
 	s := &Server{
 		store:          st,
 		storage:        obj,
@@ -51,6 +58,7 @@ func NewServerWithStorageAndAuth(st JobStore, obj storage.ObjectStorage, cfg sto
 		maxUploadBytes: MaxUploadBytesFromEnv(),
 		uploadTimeout:  UploadTimeoutFromEnv(),
 		auth:           authCfg,
+		rabbit:         pub,
 		mux:            http.NewServeMux(),
 	}
 	s.registerRoutes()
@@ -72,7 +80,7 @@ func (s *Server) registerRoutes() {
 
 	s.mux.HandleFunc("/workers/register", s.handleWorkerRegister)
 	s.mux.HandleFunc("/workers/heartbeat", s.handleWorkerHeartbeat)
-	s.mux.HandleFunc("/workers/request-job", s.handleWorkerRequestJob)
+	s.mux.HandleFunc("/workers/claim-job", s.handleWorkerClaimJob)
 	s.mux.HandleFunc("/workers/renew-lease", s.handleWorkerRenewLease)
 	s.mux.HandleFunc("/workers/job-result", s.handleWorkerJobResult)
 
@@ -172,12 +180,12 @@ func (s *Server) handleWorkerHeartbeat(w http.ResponseWriter, r *http.Request) {
 	s.workerHeartbeat(w, r)
 }
 
-func (s *Server) handleWorkerRequestJob(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleWorkerClaimJob(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	s.workerRequestJob(w, r)
+	s.workerClaimJob(w, r)
 }
 
 func (s *Server) handleWorkerRenewLease(w http.ResponseWriter, r *http.Request) {
@@ -253,22 +261,25 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 	}
 
 	id := uuid.New().String()
-	job := &types.Job{
+	if err := s.store.CreateAndDispatch(ctx, &store.JobCreateParams{
 		ID:                 id,
 		InputPath:          body.InputPath,
 		OutputPath:         body.OutputPath,
 		Preset:             spec.Preset,
 		FFmpegArgs:         spec.FFmpegArgs,
 		Storage:            types.StorageLocal,
-		Status:             types.JobStatusQueued,
 		Attempt:            0,
 		MaxAttempts:        body.MaxAttempts,
 		IdempotencyKey:     idempotencyKey,
 		MaxDurationSeconds: resolveMaxDurationSeconds(body.MaxDurationSeconds, spec.Preset),
-	}
-
-	if err := s.store.CreateJob(ctx, job); err != nil {
+	}); err != nil {
 		log.Printf("create job: %v", err)
+		http.Error(w, "failed to create job", http.StatusInternalServerError)
+		return
+	}
+	job, err := s.store.GetJob(ctx, id)
+	if err != nil {
+		log.Printf("get job after create: %v", err)
 		http.Error(w, "failed to create job", http.StatusInternalServerError)
 		return
 	}
@@ -392,27 +403,32 @@ func (s *Server) workerHeartbeat(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
-func (s *Server) workerRequestJob(w http.ResponseWriter, r *http.Request) {
+func (s *Server) workerClaimJob(w http.ResponseWriter, r *http.Request) {
 	type req struct {
 		WorkerID string `json:"worker_id"`
+		JobID    string `json:"job_id"`
 	}
 	var body req
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "invalid json", http.StatusBadRequest)
 		return
 	}
-	if body.WorkerID == "" {
-		http.Error(w, "worker_id is required", http.StatusBadRequest)
+	if body.WorkerID == "" || body.JobID == "" {
+		http.Error(w, "worker_id and job_id are required", http.StatusBadRequest)
 		return
 	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
-	job, err := s.store.AcquireJob(ctx, body.WorkerID, JobLeaseFromEnv())
+	job, err := s.store.ClaimJob(ctx, body.JobID, body.WorkerID, JobLeaseFromEnv())
 	if err != nil {
-		log.Printf("acquire job: %v", err)
-		http.Error(w, "failed to acquire job", http.StatusInternalServerError)
+		if errors.Is(err, store.ErrJobNotClaimable) {
+			http.Error(w, "job not dispatchable or already claimed", http.StatusConflict)
+			return
+		}
+		log.Printf("claim job: %v", err)
+		http.Error(w, "failed to claim job", http.StatusInternalServerError)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"job": job})
