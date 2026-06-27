@@ -317,6 +317,7 @@
       <li><a href="#env" data-i18n="nav.env">Переменные окружения</a></li>
       <li><a href="#quickstart" data-i18n="nav.quickstart">Быстрый старт</a></li>
       <li><a href="#docker" data-i18n="nav.docker">Docker</a></li>
+      <li><a href="#observability" data-i18n="nav.observability">Observability</a></li>
       <li><a href="#structure" data-i18n="nav.structure">Структура проекта</a></li>
       <li><a href="#testing" data-i18n="nav.testing">Тесты и CI</a></li>
       <li><a href="#limitations" data-i18n="nav.limitations">Ограничения и TODO</a></li>
@@ -691,9 +692,15 @@ go run ./cmd/worker</code></pre>
       <h3 data-i18n="docker.structure">Структура</h3>
       <pre><code>Dockerfile                  # multi-stage: targets scheduler, worker
 docker-compose.yml          # оркестрация сервисов
+docker-compose.observability.yml  # Prometheus, Grafana, cAdvisor (overlay)
 .env.example                # шаблон переменных (скопировать в .env)
 docker/postgres/
   postgresql.conf           # настройки PostgreSQL в контейнере
+docker/prometheus/
+  prometheus.yml            # scrape targets
+docker/grafana/
+  provisioning/             # datasource + dashboards
+  dashboards/               # JSON dashboards
 docker/worker/
   entrypoint.sh             # права на том /data для non-root worker</code></pre>
 
@@ -708,6 +715,11 @@ docker/worker/
           <tr><td><code>SCHEDULER_PORT</code></td><td><code>8080</code></td><td data-i18n="docker.schedulerPort">Порт scheduler на хосте</td></tr>
           <tr><td><code>WORKER_MAX_PARALLEL_JOBS</code></td><td><code>1</code></td><td data-i18n="docker.workerMaxJobs">Параллельные job на воркер</td></tr>
           <tr><td><code>WORKER_GPU_AVAILABLE</code></td><td><code>false</code></td><td data-i18n="docker.workerGpu">GPU у воркера</td></tr>
+          <tr><td><code>PROMETHEUS_PORT</code></td><td><code>9090</code></td><td data-i18n="docker.prometheusPort">Порт Prometheus (observability overlay)</td></tr>
+          <tr><td><code>GRAFANA_PORT</code></td><td><code>3000</code></td><td data-i18n="docker.grafanaPort">Порт Grafana</td></tr>
+          <tr><td><code>GRAFANA_ADMIN_USER</code></td><td><code>admin</code></td><td data-i18n="docker.grafanaUser">Логин Grafana</td></tr>
+          <tr><td><code>GRAFANA_ADMIN_PASSWORD</code></td><td><code>admin</code></td><td data-i18n="docker.grafanaPass">Пароль Grafana (смените в prod)</td></tr>
+          <tr><td><code>CADVISOR_PORT</code></td><td><code>8081</code></td><td data-i18n="docker.cadvisorPort">Порт cAdvisor UI на хосте</td></tr>
         </tbody>
       </table>
 
@@ -748,6 +760,46 @@ curl -s -X POST http://localhost:8080/jobs \
 docker compose down -v       # удалить volumes (данные БД и /data)</code></pre>
     </section>
 
+    <section id="observability">
+      <h2 data-i18n="obs.title">Observability</h2>
+      <p data-i18n="obs.intro">
+        Опциональный overlay <code>docker-compose.observability.yml</code>: Prometheus собирает метрики cAdvisor,
+        Grafana показывает CPU и RAM контейнеров по сервисам compose (<code>postgres</code>, <code>scheduler</code>, <code>worker</code>).
+      </p>
+
+      <h3 data-i18n="obs.run">Запуск</h3>
+      <pre><code>cp .env.example .env
+make obs-up
+# или:
+docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d</code></pre>
+
+      <h3 data-i18n="obs.urls">URL</h3>
+      <table>
+        <thead><tr><th data-i18n="obs.col.service">Сервис</th><th data-i18n="obs.col.url">URL</th><th data-i18n="obs.col.notes">Назначение</th></tr></thead>
+        <tbody>
+          <tr><td>Grafana</td><td><code>http://localhost:3000</code></td><td data-i18n="obs.url.grafana">Dashboard «Containers — CPU &amp; Memory» (логин из <code>GRAFANA_ADMIN_*</code>)</td></tr>
+          <tr><td>Prometheus</td><td><code>http://localhost:9090</code></td><td data-i18n="obs.url.prometheus">Targets, PromQL, статус scrape</td></tr>
+          <tr><td>cAdvisor</td><td><code>http://localhost:8081</code></td><td data-i18n="obs.url.cadvisor">Сырой UI метрик контейнеров (опционально)</td></tr>
+        </tbody>
+      </table>
+
+      <h3 data-i18n="obs.stack">Стек</h3>
+      <table>
+        <thead><tr><th data-i18n="obs.col.component">Компонент</th><th data-i18n="obs.col.image">Образ</th><th data-i18n="obs.col.role">Роль</th></tr></thead>
+        <tbody>
+          <tr><td><code>cadvisor</code></td><td><code>gcr.io/cadvisor/cadvisor:v0.49.1</code></td><td data-i18n="obs.role.cadvisor">CPU/RAM/IO per-container</td></tr>
+          <tr><td><code>prometheus</code></td><td><code>prom/prometheus:v2.53.0</code></td><td data-i18n="obs.role.prometheus">Scrape и хранение TSDB (retention 15d)</td></tr>
+          <tr><td><code>grafana</code></td><td><code>grafana/grafana:11.1.0</code></td><td data-i18n="obs.role.grafana">Provisioning datasource + dashboard из <code>docker/grafana/</code></td></tr>
+        </tbody>
+      </table>
+
+      <h3 data-i18n="obs.stop">Остановка</h3>
+      <pre><code>make obs-down
+# или:
+docker compose -f docker-compose.yml -f docker-compose.observability.yml down</code></pre>
+      <p data-i18n="obs.note">Observability не включается в <code>docker-compose.test.yml</code> — только dev/staging overlay поверх основного стека.</p>
+    </section>
+
     <section id="structure">
       <h2 data-i18n="structure.title">Структура проекта</h2>
       <pre><code>go_distributed_system/
@@ -757,7 +809,10 @@ docker compose down -v       # удалить volumes (данные БД и /dat
 ├── db/migrations/          # SQL миграции
 ├── docker/
 │   ├── postgres/           # postgresql.conf
+│   ├── prometheus/         # prometheus.yml
+│   ├── grafana/            # provisioning + dashboards
 │   └── worker/             # entrypoint.sh
+├── docker-compose.observability.yml  # Prometheus + Grafana + cAdvisor
 ├── internal/
 │   ├── api/                # HTTP handlers + JobStore interface
 │   ├── ffmpeg/             # Запуск ffmpeg
@@ -881,6 +936,7 @@ make ci</code></pre>
         'nav.env': 'Переменные окружения',
         'nav.quickstart': 'Быстрый старт',
         'nav.docker': 'Docker',
+        'nav.observability': 'Observability',
         'nav.structure': 'Структура проекта',
         'nav.testing': 'Тесты и CI',
         'nav.limitations': 'Ограничения и TODO',
@@ -1012,6 +1068,11 @@ make ci</code></pre>
         'docker.schedulerPort': 'Порт scheduler на хосте',
         'docker.workerMaxJobs': 'Параллельные job на воркер',
         'docker.workerGpu': 'GPU у воркера',
+        'docker.prometheusPort': 'Порт Prometheus (observability overlay)',
+        'docker.grafanaPort': 'Порт Grafana',
+        'docker.grafanaUser': 'Логин Grafana',
+        'docker.grafanaPass': 'Пароль Grafana (смените в prod)',
+        'docker.cadvisorPort': 'Порт cAdvisor UI на хосте',
         'docker.run': 'Запуск',
         'docker.docsUrl': 'Документация API: <code>http://localhost:8080/docs/</code> (порт из <code>SCHEDULER_PORT</code>).',
         'docker.scale': 'Масштабирование воркеров',
@@ -1027,6 +1088,25 @@ make ci</code></pre>
         'docker.img.workerBuild': 'сборка <code>target: worker</code>',
         'docker.img.worker': 'ffmpeg, том <code>/data</code>, drop privileges',
         'docker.cleanup': 'Остановка и очистка',
+        'obs.title': 'Observability',
+        'obs.intro': 'Опциональный overlay <code>docker-compose.observability.yml</code>: Prometheus собирает метрики cAdvisor, Grafana показывает CPU и RAM контейнеров по сервисам compose (<code>postgres</code>, <code>scheduler</code>, <code>worker</code>).',
+        'obs.run': 'Запуск',
+        'obs.urls': 'URL',
+        'obs.col.service': 'Сервис',
+        'obs.col.url': 'URL',
+        'obs.col.notes': 'Назначение',
+        'obs.url.grafana': 'Dashboard «Containers — CPU & Memory» (логин из <code>GRAFANA_ADMIN_*</code>)',
+        'obs.url.prometheus': 'Targets, PromQL, статус scrape',
+        'obs.url.cadvisor': 'Сырой UI метрик контейнеров (опционально)',
+        'obs.stack': 'Стек',
+        'obs.col.component': 'Компонент',
+        'obs.col.image': 'Образ',
+        'obs.col.role': 'Роль',
+        'obs.role.cadvisor': 'CPU/RAM/IO per-container',
+        'obs.role.prometheus': 'Scrape и хранение TSDB (retention 15d)',
+        'obs.role.grafana': 'Provisioning datasource + dashboard из <code>docker/grafana/</code>',
+        'obs.stop': 'Остановка',
+        'obs.note': 'Observability не включается в <code>docker-compose.test.yml</code> — только dev/staging overlay поверх основного стека.',
         'structure.title': 'Структура проекта',
         'testing.title': 'Тесты и CI',
         'testing.intro': 'Unit-тесты не требуют PostgreSQL: HTTP handlers используют интерфейс <code>api.JobStore</code> с mock-реализацией. Integration-тесты (build tag <code>integration</code>) подключаются <strong>только</strong> к тестовой БД через <code>TEST_DB_DSN</code> (имя базы должно оканчиваться на <code>_test</code>). Dev-база из <code>docker-compose.yml</code> (порт 5432) не используется.',
@@ -1066,6 +1146,7 @@ make ci</code></pre>
         'nav.env': 'Environment variables',
         'nav.quickstart': 'Quick start',
         'nav.docker': 'Docker',
+        'nav.observability': 'Observability',
         'nav.structure': 'Project structure',
         'nav.testing': 'Tests & CI',
         'nav.limitations': 'Limitations & TODO',
@@ -1197,6 +1278,11 @@ make ci</code></pre>
         'docker.schedulerPort': 'Scheduler port on host',
         'docker.workerMaxJobs': 'Parallel jobs per worker',
         'docker.workerGpu': 'Worker GPU flag',
+        'docker.prometheusPort': 'Prometheus port (observability overlay)',
+        'docker.grafanaPort': 'Grafana port',
+        'docker.grafanaUser': 'Grafana login',
+        'docker.grafanaPass': 'Grafana password (change in prod)',
+        'docker.cadvisorPort': 'cAdvisor UI port on host',
         'docker.run': 'Run',
         'docker.docsUrl': 'API docs: <code>http://localhost:8080/docs/</code> (port from <code>SCHEDULER_PORT</code>).',
         'docker.scale': 'Scaling workers',
@@ -1212,6 +1298,25 @@ make ci</code></pre>
         'docker.img.workerBuild': 'build <code>target: worker</code>',
         'docker.img.worker': 'ffmpeg, <code>/data</code> volume, drop privileges',
         'docker.cleanup': 'Stop and cleanup',
+        'obs.title': 'Observability',
+        'obs.intro': 'Optional overlay <code>docker-compose.observability.yml</code>: Prometheus scrapes cAdvisor; Grafana shows container CPU and RAM by compose service (<code>postgres</code>, <code>scheduler</code>, <code>worker</code>).',
+        'obs.run': 'Run',
+        'obs.urls': 'URLs',
+        'obs.col.service': 'Service',
+        'obs.col.url': 'URL',
+        'obs.col.notes': 'Purpose',
+        'obs.url.grafana': 'Dashboard “Containers — CPU & Memory” (login from <code>GRAFANA_ADMIN_*</code>)',
+        'obs.url.prometheus': 'Targets, PromQL, scrape status',
+        'obs.url.cadvisor': 'Raw container metrics UI (optional)',
+        'obs.stack': 'Stack',
+        'obs.col.component': 'Component',
+        'obs.col.image': 'Image',
+        'obs.col.role': 'Role',
+        'obs.role.cadvisor': 'CPU/RAM/IO per container',
+        'obs.role.prometheus': 'Scrape and TSDB storage (15d retention)',
+        'obs.role.grafana': 'Datasource + dashboard provisioning from <code>docker/grafana/</code>',
+        'obs.stop': 'Stop',
+        'obs.note': 'Observability is not included in <code>docker-compose.test.yml</code> — dev/staging overlay on top of the main stack only.',
         'structure.title': 'Project structure',
         'testing.title': 'Tests & CI',
         'testing.intro': 'Unit tests need no PostgreSQL: HTTP handlers use the <code>api.JobStore</code> interface with a mock. Integration tests (build tag <code>integration</code>) connect <strong>only</strong> to a test DB via <code>TEST_DB_DSN</code> (database name must end with <code>_test</code>). Dev DB from <code>docker-compose.yml</code> (port 5432) is not used.',
@@ -1251,6 +1356,7 @@ make ci</code></pre>
         'nav.env': 'Змінні оточення',
         'nav.quickstart': 'Швидкий старт',
         'nav.docker': 'Docker',
+        'nav.observability': 'Observability',
         'nav.structure': 'Структура проєкту',
         'nav.testing': 'Тести та CI',
         'nav.limitations': 'Обмеження та TODO',
@@ -1382,6 +1488,11 @@ make ci</code></pre>
         'docker.schedulerPort': 'Порт scheduler на хості',
         'docker.workerMaxJobs': 'Паралельні job на воркер',
         'docker.workerGpu': 'GPU у воркера',
+        'docker.prometheusPort': 'Порт Prometheus (observability overlay)',
+        'docker.grafanaPort': 'Порт Grafana',
+        'docker.grafanaUser': 'Логін Grafana',
+        'docker.grafanaPass': 'Пароль Grafana (змініть у prod)',
+        'docker.cadvisorPort': 'Порт cAdvisor UI на хості',
         'docker.run': 'Запуск',
         'docker.docsUrl': 'Документація API: <code>http://localhost:8080/docs/</code> (порт із <code>SCHEDULER_PORT</code>).',
         'docker.scale': 'Масштабування воркерів',
@@ -1397,6 +1508,25 @@ make ci</code></pre>
         'docker.img.workerBuild': 'збірка <code>target: worker</code>',
         'docker.img.worker': 'ffmpeg, том <code>/data</code>, drop privileges',
         'docker.cleanup': 'Зупинка та очищення',
+        'obs.title': 'Observability',
+        'obs.intro': 'Опційний overlay <code>docker-compose.observability.yml</code>: Prometheus збирає метрики cAdvisor, Grafana показує CPU та RAM контейнерів за сервісами compose (<code>postgres</code>, <code>scheduler</code>, <code>worker</code>).',
+        'obs.run': 'Запуск',
+        'obs.urls': 'URL',
+        'obs.col.service': 'Сервіс',
+        'obs.col.url': 'URL',
+        'obs.col.notes': 'Призначення',
+        'obs.url.grafana': 'Dashboard «Containers — CPU & Memory» (логін із <code>GRAFANA_ADMIN_*</code>)',
+        'obs.url.prometheus': 'Targets, PromQL, статус scrape',
+        'obs.url.cadvisor': 'Сирий UI метрик контейнерів (опційно)',
+        'obs.stack': 'Стек',
+        'obs.col.component': 'Компонент',
+        'obs.col.image': 'Образ',
+        'obs.col.role': 'Роль',
+        'obs.role.cadvisor': 'CPU/RAM/IO per-container',
+        'obs.role.prometheus': 'Scrape та зберігання TSDB (retention 15d)',
+        'obs.role.grafana': 'Provisioning datasource + dashboard з <code>docker/grafana/</code>',
+        'obs.stop': 'Зупинка',
+        'obs.note': 'Observability не включається в <code>docker-compose.test.yml</code> — лише dev/staging overlay поверх основного стеку.',
         'structure.title': 'Структура проєкту',
         'testing.title': 'Тести та CI',
         'testing.intro': 'Unit-тести не потребують PostgreSQL: HTTP handlers використовують інтерфейс <code>api.JobStore</code> з mock-реалізацією. Integration-тести (build tag <code>integration</code>) підключаються <strong>лише</strong> до тестової БД через <code>TEST_DB_DSN</code> (ім\'я бази має закінчуватися на <code>_test</code>). Dev-база з <code>docker-compose.yml</code> (порт 5432) не використовується.',

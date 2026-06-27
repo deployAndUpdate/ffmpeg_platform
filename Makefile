@@ -1,5 +1,7 @@
-.PHONY: vet build test test-db-up test-db-down test-integration test-all ci
+.PHONY: vet build test test-db-up test-db-down test-integration test-all ci obs-up obs-down
 
+COMPOSE := docker compose
+COMPOSE_OBS := $(COMPOSE) -f docker-compose.yml -f docker-compose.observability.yml
 COMPOSE_TEST := docker-compose -f docker-compose.test.yml
 TEST_DB_DSN ?= postgres://video_test:video_test@127.0.0.1:5433/video_test?sslmode=disable
 
@@ -24,3 +26,9 @@ test-integration: test-db-up
 test-all: test test-integration
 
 ci: vet build test test-integration
+
+obs-up:
+	$(COMPOSE_OBS) up -d
+
+obs-down:
+	$(COMPOSE_OBS) down
