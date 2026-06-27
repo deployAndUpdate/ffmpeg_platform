@@ -104,7 +104,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "sum by (container_label_com_docker_compose_service) (rate(container_cpu_usage_seconds_total{container_label_com_docker_compose_service=~\"$service\", container_label_com_docker_compose_service!=\"\"}[5m]))",
+          "expr": "sum by (container_label_com_docker_compose_service) (rate(container_cpu_usage_seconds_total{id=~\"/docker/.+\", container_label_com_docker_compose_service=~\"$service\", container_label_com_docker_compose_service!=\"\"}[5m]))",
           "legendFormat": "{{container_label_com_docker_compose_service}}",
           "range": true,
           "refId": "A"
@@ -196,7 +196,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "sum by (container_label_com_docker_compose_service) (container_memory_working_set_bytes{container_label_com_docker_compose_service=~\"$service\", container_label_com_docker_compose_service!=\"\"}) / 1024 / 1024",
+          "expr": "sum by (container_label_com_docker_compose_service) (container_memory_working_set_bytes{id=~\"/docker/.+\", container_label_com_docker_compose_service=~\"$service\", container_label_com_docker_compose_service!=\"\"}) / 1024 / 1024",
           "legendFormat": "{{container_label_com_docker_compose_service}}",
           "range": true,
           "refId": "A"
@@ -279,7 +279,7 @@
           },
           "editorMode": "code",
           "exemplar": false,
-          "expr": "sum by (container_label_com_docker_compose_service) (rate(container_cpu_usage_seconds_total{container_label_com_docker_compose_service=~\"$service\", container_label_com_docker_compose_service!=\"\"}[5m]))",
+          "expr": "sum by (container_label_com_docker_compose_service) (rate(container_cpu_usage_seconds_total{id=~\"/docker/.+\", container_label_com_docker_compose_service=~\"$service\", container_label_com_docker_compose_service!=\"\"}[5m]))",
           "format": "table",
           "instant": true,
           "legendFormat": "__auto",
@@ -293,7 +293,7 @@
           },
           "editorMode": "code",
           "exemplar": false,
-          "expr": "sum by (container_label_com_docker_compose_service) (container_memory_working_set_bytes{container_label_com_docker_compose_service=~\"$service\", container_label_com_docker_compose_service!=\"\"}) / 1024 / 1024",
+          "expr": "sum by (container_label_com_docker_compose_service) (container_memory_working_set_bytes{id=~\"/docker/.+\", container_label_com_docker_compose_service=~\"$service\", container_label_com_docker_compose_service!=\"\"}) / 1024 / 1024",
           "format": "table",
           "instant": true,
           "legendFormat": "__auto",
@@ -345,7 +345,7 @@
           "type": "prometheus",
           "uid": "prometheus"
         },
-        "definition": "label_values(container_memory_working_set_bytes{container_label_com_docker_compose_service!=\"\"}, container_label_com_docker_compose_service)",
+        "definition": "label_values(container_memory_working_set_bytes{id=~\"/docker/.+\", container_label_com_docker_compose_service!=\"\"}, container_label_com_docker_compose_service)",
         "hide": 0,
         "includeAll": true,
         "label": "Service",
@@ -354,7 +354,7 @@
         "options": [],
         "query": {
           "qryType": 1,
-          "query": "label_values(container_memory_working_set_bytes{container_label_com_docker_compose_service!=\"\"}, container_label_com_docker_compose_service)",
+          "query": "label_values(container_memory_working_set_bytes{id=~\"/docker/.+\", container_label_com_docker_compose_service!=\"\"}, container_label_com_docker_compose_service)",
           "refId": "PrometheusVariableQueryEditor-VariableQuery"
         },
         "refresh": 2,

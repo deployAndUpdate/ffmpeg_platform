@@ -7,7 +7,8 @@ name: go-distributed-system
 
 services:
   cadvisor:
-    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    # v0.49.x uses Docker API 1.41; Docker 29+ requires ≥1.44 (no compose labels in metrics).
+    image: ghcr.io/google/cadvisor:v0.53.0
     restart: unless-stopped
     privileged: true
     volumes:

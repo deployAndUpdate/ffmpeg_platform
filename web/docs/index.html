@@ -1016,7 +1016,7 @@ docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d</
       <table>
         <thead><tr><th data-i18n="obs.col.component">Компонент</th><th data-i18n="obs.col.image">Образ</th><th data-i18n="obs.col.role">Роль</th></tr></thead>
         <tbody>
-          <tr><td><code>cadvisor</code></td><td><code>gcr.io/cadvisor/cadvisor:v0.49.1</code></td><td data-i18n="obs.role.cadvisor">CPU/RAM/IO per-container</td></tr>
+          <tr><td><code>cadvisor</code></td><td><code>ghcr.io/google/cadvisor:v0.53.0</code></td><td data-i18n="obs.role.cadvisor">CPU/RAM/IO per-container (Docker API ≥1.44)</td></tr>
           <tr><td><code>prometheus</code></td><td><code>prom/prometheus:v2.53.0</code></td><td data-i18n="obs.role.prometheus">Scrape и хранение TSDB (retention 15d)</td></tr>
           <tr><td><code>grafana</code></td><td><code>grafana/grafana:11.1.0</code></td><td data-i18n="obs.role.grafana">Provisioning datasource + dashboard из <code>docker/grafana/</code></td></tr>
         </tbody>
@@ -1441,7 +1441,7 @@ make ci</code></pre>
         'obs.col.component': 'Компонент',
         'obs.col.image': 'Образ',
         'obs.col.role': 'Роль',
-        'obs.role.cadvisor': 'CPU/RAM/IO per-container',
+        'obs.role.cadvisor': 'CPU/RAM/IO per-container (Docker API ≥1.44, ghcr.io v0.53+)',
         'obs.role.prometheus': 'Scrape и хранение TSDB (retention 15d)',
         'obs.role.grafana': 'Provisioning datasource + dashboard из <code>docker/grafana/</code>',
         'obs.stop': 'Остановка',
@@ -1749,7 +1749,7 @@ make ci</code></pre>
         'obs.col.component': 'Component',
         'obs.col.image': 'Image',
         'obs.col.role': 'Role',
-        'obs.role.cadvisor': 'CPU/RAM/IO per container',
+        'obs.role.cadvisor': 'CPU/RAM/IO per container (Docker API ≥1.44, ghcr.io v0.53+)',
         'obs.role.prometheus': 'Scrape and TSDB storage (15d retention)',
         'obs.role.grafana': 'Datasource + dashboard provisioning from <code>docker/grafana/</code>',
         'obs.stop': 'Stop',
@@ -2047,7 +2047,7 @@ make ci</code></pre>
         'obs.col.component': 'Компонент',
         'obs.col.image': 'Образ',
         'obs.col.role': 'Роль',
-        'obs.role.cadvisor': 'CPU/RAM/IO per-container',
+        'obs.role.cadvisor': 'CPU/RAM/IO per-container (Docker API ≥1.44, ghcr.io v0.53+)',
         'obs.role.prometheus': 'Scrape та зберігання TSDB (retention 15d)',
         'obs.role.grafana': 'Provisioning datasource + dashboard з <code>docker/grafana/</code>',
         'obs.stop': 'Зупинка',
