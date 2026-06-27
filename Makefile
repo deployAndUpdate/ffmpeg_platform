@@ -37,7 +37,7 @@ migrate-backup:
 test-rabbit-up: test-db-up
 
 test-integration: test-rabbit-up
-	TEST_DB_DSN=$(TEST_DB_DSN) TEST_RABBITMQ_URL=$(TEST_RABBITMQ_URL) go test -race -count=1 -p 1 -tags=integration ./internal/migrate/... ./internal/store/... ./internal/outbox/... ./internal/queue/... ./internal/api/... ./internal/worker/... ./internal/reaper/...
+	TEST_DB_DSN=$(TEST_DB_DSN) TEST_RABBITMQ_URL=$(TEST_RABBITMQ_URL) go test -race -count=1 -p 1 -tags=integration -timeout 15m ./internal/migrate/... ./internal/store/... ./internal/outbox/... ./internal/queue/... ./internal/api/... ./internal/worker/... ./internal/reaper/...
 
 test-all: test test-integration
 

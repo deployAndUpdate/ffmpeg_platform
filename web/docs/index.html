@@ -1051,6 +1051,7 @@ docker compose -f docker-compose.yml -f docker-compose.observability.yml down</c
 │   ├── storage/            # Cloudflare R2 (S3 API)
 │   ├── store/              # PostgreSQL слой
 │   ├── testutil/           # Хелперы integration-тестов (build tag integration)
+│   │   └── e2e/            # E2E harness: scheduler stack, worker, HTTP client
 │   ├── types/              # Доменные типы
 │   └── worker/             # Клиент API + цикл воркера
 ├── .github/workflows/      # GitHub Actions (CI на pull request)
@@ -1060,7 +1061,7 @@ docker compose -f docker-compose.yml -f docker-compose.observability.yml down</c
 │   └── admin/              # Admin dashboard UI + embed
 ├── Dockerfile              # scheduler + worker + migrate targets
 ├── docker-compose.yml
-├── docker-compose.test.yml # PostgreSQL для integration-тестов (порт 5433)
+├── docker-compose.test.yml # PostgreSQL + RabbitMQ для integration/e2e (5433 / 5673)
 ├── Makefile                # test, test-integration, ci
 ├── .env.example
 └── go.mod</code></pre>
@@ -1079,7 +1080,7 @@ docker compose -f docker-compose.yml -f docker-compose.observability.yml down</c
       <pre><code># unit-тесты (быстро, без БД)
 make test
 
-# integration: поднимает postgres-test на порту 5433, прогоняет тесты, данные в tmpfs
+# integration: postgres-test (5433) + rabbitmq-test (5673), ffmpeg, e2e-тесты
 make test-integration
 
 # остановить тестовый postgres
@@ -1089,10 +1090,14 @@ make test-db-down
 make ci</code></pre>
 
       <p data-i18n="testing.dsn">
-        Тестовый PostgreSQL описан в <code>docker-compose.test.yml</code>:
-        пользователь/БД <code>video_test</code>, порт <code>5433</code>.
+        Тестовый стек описан в <code>docker-compose.test.yml</code>:
+        PostgreSQL <code>video_test</code> на порту <code>5433</code>,
+        RabbitMQ на порту <code>5673</code>.
         DSN по умолчанию:
-        <code>postgres://video_test:video_test@127.0.0.1:5433/video_test?sslmode=disable</code>
+        <code>postgres://video_test:video_test@127.0.0.1:5433/video_test?sslmode=disable</code>,
+        RabbitMQ:
+        <code>amqp://guest:guest@127.0.0.1:5673/</code>.
+        E2E-тесты также требуют <code>ffmpeg</code> в PATH.
       </p>
 
       <h3 data-i18n="testing.pyramid">Пирамида тестов</h3>
@@ -1132,9 +1137,9 @@ make ci</code></pre>
             <td data-i18n="testing.store">Очередь, SKIP LOCKED, lease, retry/failed, reaper, логи</td>
           </tr>
           <tr>
-            <td>Integration</td>
-            <td><code>internal/api</code></td>
-            <td data-i18n="testing.apiSmoke">Smoke: create → register → claim-job → result → get/logs</td>
+            <td>E2E</td>
+            <td><code>internal/api</code> + <code>internal/testutil/e2e</code></td>
+            <td data-i18n="testing.e2e">POST /jobs → outbox relay → RabbitMQ → worker → GET /jobs/{id} (COMPLETED, logs, output)</td>
           </tr>
         </tbody>
       </table>
@@ -1147,7 +1152,7 @@ make ci</code></pre>
         <li data-i18n="testing.gha.lint"><strong>lint</strong> — go vet, go mod verify</li>
         <li data-i18n="testing.gha.unit"><strong>unit-tests</strong> — go test -short ./...</li>
         <li data-i18n="testing.gha.build"><strong>build</strong> — сборка всех пакетов и бинарников scheduler, worker, migrate</li>
-        <li data-i18n="testing.gha.integration"><strong>integration-tests</strong> — PostgreSQL 16 (service container), <code>migrate up</code>, go test -p 1 -tags=integration (включая <code>internal/migrate</code>)</li>
+        <li data-i18n="testing.gha.integration"><strong>integration-tests</strong> — PostgreSQL 16 + RabbitMQ, <code>ffmpeg</code>, <code>migrate up</code>, go test -p 1 -tags=integration -timeout 15m (e2e + migrate)</li>
       </ol>
     </section>
 
@@ -1450,7 +1455,7 @@ make ci</code></pre>
         'testing.title': 'Тесты и CI',
         'testing.intro': 'Unit-тесты не требуют PostgreSQL: HTTP handlers используют интерфейс <code>api.JobStore</code> с mock-реализацией. Integration-тесты (build tag <code>integration</code>) подключаются <strong>только</strong> к тестовой БД через <code>TEST_DB_DSN</code> (имя базы должно оканчиваться на <code>_test</code>). Dev-база из <code>docker-compose.yml</code> (порт 5432) не используется.',
         'testing.local': 'Локальный запуск',
-        'testing.dsn': 'Тестовый PostgreSQL описан в <code>docker-compose.test.yml</code>: пользователь/БД <code>video_test</code>, порт <code>5433</code>. DSN по умолчанию: <code>postgres://video_test:video_test@127.0.0.1:5433/video_test?sslmode=disable</code>',
+        'testing.dsn': 'Тестовый стек описан в <code>docker-compose.test.yml</code>: PostgreSQL <code>video_test</code> на порту <code>5433</code>, RabbitMQ на порту <code>5673</code>. DSN по умолчанию: <code>postgres://video_test:video_test@127.0.0.1:5433/video_test?sslmode=disable</code>, RabbitMQ: <code>amqp://guest:guest@127.0.0.1:5673/</code>. E2E-тесты также требуют <code>ffmpeg</code> в PATH.',
         'testing.pyramid': 'Пирамида тестов',
         'testing.col.layer': 'Слой',
         'testing.col.package': 'Пакет',
@@ -1461,12 +1466,12 @@ make ci</code></pre>
         'testing.worker': 'HTTP-клиент scheduler (<code>httptest.Server</code>)',
         'testing.store': 'Очередь, SKIP LOCKED, lease, retry/failed, reaper, логи',
         'testing.reaper': 'Тик reaper, отмена по context (mock Store)',
-        'testing.apiSmoke': 'Smoke: create → register → claim-job → result → get/logs',
+        'testing.e2e': 'POST /jobs → outbox relay → RabbitMQ → worker → GET /jobs/{id} (COMPLETED, logs, output)',
         'testing.gha': 'Workflow <code>.github/workflows/ci.yml</code> запускается на pull request и push в <code>main</code>/<code>master</code>:',
         'testing.gha.lint': '<strong>lint</strong> — <code>go vet</code>, <code>go mod verify</code>',
         'testing.gha.unit': '<strong>unit-tests</strong> — <code>go test -short ./...</code>',
         'testing.gha.build': '<strong>build</strong> — сборка всех пакетов и бинарников <code>scheduler</code>, <code>worker</code>, <code>migrate</code>',
-        'testing.gha.integration': '<strong>integration-tests</strong> — PostgreSQL 16 (service container), <code>migrate up</code>, <code>go test -p 1 -tags=integration</code> (включая <code>internal/migrate</code>)',
+        'testing.gha.integration': '<strong>integration-tests</strong> — PostgreSQL 16 + RabbitMQ (service containers), <code>ffmpeg</code>, <code>migrate up</code>, <code>go test -p 1 -tags=integration -timeout 15m</code> (включая e2e и <code>internal/migrate</code>)',
         'limitations.title': 'Ограничения и TODO',
         'limitations.migrator': 'Автоматический мигратор для локального запуска (в Docker init SQL применяется при первом старте postgres)',
         'limitations.atLeastOnce': 'At-least-once семантика — возможны дублирующиеся запуски ffmpeg',
@@ -1758,7 +1763,7 @@ make ci</code></pre>
         'testing.title': 'Tests & CI',
         'testing.intro': 'Unit tests need no PostgreSQL: HTTP handlers use the <code>api.JobStore</code> interface with a mock. Integration tests (build tag <code>integration</code>) connect <strong>only</strong> to a test DB via <code>TEST_DB_DSN</code> (database name must end with <code>_test</code>). Dev DB from <code>docker-compose.yml</code> (port 5432) is not used.',
         'testing.local': 'Local run',
-        'testing.dsn': 'Test PostgreSQL is defined in <code>docker-compose.test.yml</code>: user/DB <code>video_test</code>, port <code>5433</code>. Default DSN: <code>postgres://video_test:video_test@127.0.0.1:5433/video_test?sslmode=disable</code>',
+        'testing.dsn': 'Test stack is defined in <code>docker-compose.test.yml</code>: PostgreSQL <code>video_test</code> on port <code>5433</code>, RabbitMQ on port <code>5673</code>. Default DSN: <code>postgres://video_test:video_test@127.0.0.1:5433/video_test?sslmode=disable</code>, RabbitMQ: <code>amqp://guest:guest@127.0.0.1:5673/</code>. E2E tests also require <code>ffmpeg</code> in PATH.',
         'testing.pyramid': 'Test pyramid',
         'testing.col.layer': 'Layer',
         'testing.col.package': 'Package',
@@ -1769,12 +1774,12 @@ make ci</code></pre>
         'testing.worker': 'Scheduler HTTP client (<code>httptest.Server</code>)',
         'testing.store': 'Queue, SKIP LOCKED, lease, retry/failed, reaper, logs',
         'testing.reaper': 'Reaper tick, context cancellation (mock Store)',
-        'testing.apiSmoke': 'Smoke: create → register → claim-job → result → get/logs',
+        'testing.e2e': 'POST /jobs → outbox relay → RabbitMQ → worker → GET /jobs/{id} (COMPLETED, logs, output)',
         'testing.gha': 'Workflow <code>.github/workflows/ci.yml</code> runs on pull request and push to <code>main</code>/<code>master</code>:',
         'testing.gha.lint': '<strong>lint</strong> — <code>go vet</code>, <code>go mod verify</code>',
         'testing.gha.unit': '<strong>unit-tests</strong> — <code>go test -short ./...</code>',
         'testing.gha.build': '<strong>build</strong> — build all packages and <code>scheduler</code>, <code>worker</code>, <code>migrate</code> binaries',
-        'testing.gha.integration': '<strong>integration-tests</strong> — PostgreSQL 16 (service container), <code>migrate up</code>, <code>go test -p 1 -tags=integration</code> (includes <code>internal/migrate</code>)',
+        'testing.gha.integration': '<strong>integration-tests</strong> — PostgreSQL 16 + RabbitMQ (service containers), <code>ffmpeg</code>, <code>migrate up</code>, <code>go test -p 1 -tags=integration -timeout 15m</code> (includes e2e and <code>internal/migrate</code>)',
         'limitations.title': 'Limitations & TODO',
         'limitations.migrator': 'Standalone migration tool for local runs (Docker applies init SQL on first postgres start)',
         'limitations.atLeastOnce': 'At-least-once semantics — duplicate ffmpeg runs are possible',
@@ -2056,7 +2061,7 @@ make ci</code></pre>
         'testing.title': 'Тести та CI',
         'testing.intro': 'Unit-тести не потребують PostgreSQL: HTTP handlers використовують інтерфейс <code>api.JobStore</code> з mock-реалізацією. Integration-тести (build tag <code>integration</code>) підключаються <strong>лише</strong> до тестової БД через <code>TEST_DB_DSN</code> (ім\'я бази має закінчуватися на <code>_test</code>). Dev-база з <code>docker-compose.yml</code> (порт 5432) не використовується.',
         'testing.local': 'Локальний запуск',
-        'testing.dsn': 'Тестовий PostgreSQL описано в <code>docker-compose.test.yml</code>: користувач/БД <code>video_test</code>, порт <code>5433</code>. DSN за замовчуванням: <code>postgres://video_test:video_test@127.0.0.1:5433/video_test?sslmode=disable</code>',
+        'testing.dsn': 'Тестовий стек описано в <code>docker-compose.test.yml</code>: PostgreSQL <code>video_test</code> на порту <code>5433</code>, RabbitMQ на порту <code>5673</code>. DSN за замовчуванням: <code>postgres://video_test:video_test@127.0.0.1:5433/video_test?sslmode=disable</code>, RabbitMQ: <code>amqp://guest:guest@127.0.0.1:5673/</code>. E2E-тести також потребують <code>ffmpeg</code> у PATH.',
         'testing.pyramid': 'Піраміда тестів',
         'testing.col.layer': 'Шар',
         'testing.col.package': 'Пакет',
@@ -2067,12 +2072,12 @@ make ci</code></pre>
         'testing.worker': 'HTTP-клієнт scheduler (<code>httptest.Server</code>)',
         'testing.store': 'Черга, SKIP LOCKED, lease, retry/failed, reaper, логи',
         'testing.reaper': 'Тік reaper, скасування по context (mock Store)',
-        'testing.apiSmoke': 'Smoke: create → register → claim-job → result → get/logs',
+        'testing.e2e': 'POST /jobs → outbox relay → RabbitMQ → worker → GET /jobs/{id} (COMPLETED, logs, output)',
         'testing.gha': 'Workflow <code>.github/workflows/ci.yml</code> запускається на pull request і push у <code>main</code>/<code>master</code>:',
         'testing.gha.lint': '<strong>lint</strong> — <code>go vet</code>, <code>go mod verify</code>',
         'testing.gha.unit': '<strong>unit-tests</strong> — <code>go test -short ./...</code>',
         'testing.gha.build': '<strong>build</strong> — збірка всіх пакетів і бінарників <code>scheduler</code>, <code>worker</code>, <code>migrate</code>',
-        'testing.gha.integration': '<strong>integration-tests</strong> — PostgreSQL 16 (service container), <code>migrate up</code>, <code>go test -p 1 -tags=integration</code> (включно з <code>internal/migrate</code>)',
+        'testing.gha.integration': '<strong>integration-tests</strong> — PostgreSQL 16 + RabbitMQ (service containers), <code>ffmpeg</code>, <code>migrate up</code>, <code>go test -p 1 -tags=integration -timeout 15m</code> (включно з e2e та <code>internal/migrate</code>)',
         'limitations.title': 'Обмеження та TODO',
         'limitations.migrator': 'Автоматичний мігратор для локального запуску (у Docker init SQL застосовується при першому старті postgres)',
         'limitations.atLeastOnce': 'At-least-once семантика — можливі дубльовані запуски ffmpeg',
